@@ -1,3 +1,9 @@
+"""Codex Thread 级配置。
+
+学习提示：这些选项控制模型、sandbox 权限、工作目录、网络、搜索和审批策略。
+代码执行型 Agent 的风险边界主要就在这些配置里。
+"""
+
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence

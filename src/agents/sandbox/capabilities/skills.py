@@ -1,3 +1,11 @@
+"""中文学习提示：sandbox skill 能力。
+
+Skill 是一组可按需读取的本地说明文件，核心入口通常是 `SKILL.md`。
+这个模块负责扫描技能目录、读取 frontmatter、把技能索引注入模型指令，并在懒加载
+模式下提供 `load_skill` 工具。对我们学习 agent 工程很重要：复杂能力可以先给
+模型“索引”，真正需要时再加载全文，节省上下文。
+"""
+
 from __future__ import annotations
 
 import abc

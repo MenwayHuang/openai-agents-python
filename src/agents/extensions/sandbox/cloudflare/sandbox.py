@@ -7,6 +7,9 @@ The sandbox communicates with a Cloudflare Worker service over HTTP and WebSocke
 Note: The `aiohttp` dependency is intended to be optional (installed via an extra),
 so package-level exports should guard imports of this module. Within this module,
 we import aiohttp normally so IDEs can resolve and navigate types.
+
+学习提示：这是 Cloudflare sandbox 的远程 HTTP/WebSocket 适配层。它展示了第三方沙箱
+如何实现统一的 start/exec/read/write/archive/port API。
 """
 
 from __future__ import annotations

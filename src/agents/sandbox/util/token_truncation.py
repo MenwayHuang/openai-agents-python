@@ -1,3 +1,9 @@
+"""中文学习提示：按字节/token 预算截断文本输出。
+
+模型工具输出不能无限塞进上下文，所以这里按近似 token 预算保留头尾，并插入截断标记。
+Shell 工具、PTY 输出和 memory prompt 都会用到类似策略。
+"""
+
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -10,6 +16,8 @@ TruncationMode = Literal["bytes", "tokens"]
 
 @dataclass(frozen=True)
 class TruncationPolicy:
+    """截断策略：用 bytes 或近似 tokens 作为预算单位。"""
+
     mode: TruncationMode
     limit: int
 

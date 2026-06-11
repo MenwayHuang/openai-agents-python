@@ -1,3 +1,8 @@
+"""中文学习提示：这里统一暴露 openai-agents 包版本。
+
+运行源码但没有安装成 pip 包时，会落到 0.0.0；排查环境时可以先看这里。
+"""
+
 import importlib.metadata
 
 try:

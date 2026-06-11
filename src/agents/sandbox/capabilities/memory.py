@@ -1,3 +1,10 @@
+"""中文学习提示：sandbox 记忆能力。
+
+这里负责把已有 memory_summary 注入 agent 指令，并声明 memory 读写依赖哪些能力。
+它和 `sandbox/memory/*` 的后台生成流程配合使用：本文件偏“运行前读取记忆”，
+manager/phase_one/phase_two 偏“运行后生成和整理记忆”。
+"""
+
 from __future__ import annotations
 
 from pathlib import Path
@@ -41,6 +48,8 @@ class Memory(Capability):
         _validate_relative_path(name="layout.sessions_dir", path=Path(self.layout.sessions_dir))
 
     def required_capability_types(self) -> set[str]:
+        """声明 memory 能力依赖 shell/filesystem 的情况。"""
+
         if self.read is None:
             return set()
         if self.read.live_update:
@@ -48,6 +57,8 @@ class Memory(Capability):
         return {"shell"}
 
     async def instructions(self, manifest: Manifest) -> str | None:
+        """读取 memory_summary.md，并渲染成追加给模型的系统提示。"""
+
         _ = manifest
         if self.read is None:
             return None

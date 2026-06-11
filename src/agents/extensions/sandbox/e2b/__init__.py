@@ -1,3 +1,9 @@
+"""E2B sandbox 扩展导出入口。
+
+学习提示：E2B provider 适合代码解释器/远程执行类 Agent 场景。当前只需要知道它也是
+SandboxClient/SandboxSession 的一个第三方实现。
+"""
+
 from __future__ import annotations
 
 from .mounts import E2BCloudBucketMountStrategy

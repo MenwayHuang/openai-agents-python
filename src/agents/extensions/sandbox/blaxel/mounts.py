@@ -13,6 +13,9 @@ Two strategies are provided:
   (``POST /drives/mount``).  Drives persist data across sandbox sessions and
   can be shared between sandboxes.  See
   `Blaxel Drive docs <https://docs.blaxel.ai/Agent-drive/Overview>`_.
+
+学习提示：本文件只处理 Blaxel 环境里的存储挂载策略。读它时重点看凭据如何临时写入、
+挂载命令如何构造、以及远端存储为什么要被当成不可信文件系统。
 """
 
 from __future__ import annotations

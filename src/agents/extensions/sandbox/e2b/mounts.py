@@ -1,4 +1,8 @@
-"""Mount strategy for E2B sandboxes."""
+"""Mount strategy for E2B sandboxes.
+
+学习提示：E2B 挂载策略主要处理 rclone/FUSE 安装和对象存储挂载。
+这类逻辑是沙箱运行环境准备工作，不属于 Agent 推理主循环。
+"""
 
 from __future__ import annotations
 

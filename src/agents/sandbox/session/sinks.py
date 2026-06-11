@@ -1,3 +1,9 @@
+"""中文学习提示：sandbox 审计事件 sink。
+
+Sink 决定审计事件去哪里：回调函数、宿主机 JSONL、workspace 内 JSONL、HTTP 代理或多个
+sink 串联。生产环境可把这里接到日志、审计或监控系统，但要先配置 payload policy。
+"""
+
 from __future__ import annotations
 
 import abc

@@ -7,6 +7,9 @@ This module provides a Blaxel-backed sandbox client/session implementation backe
 The ``blaxel`` dependency is optional, so package-level exports should guard imports of this
 module. Within this module, Blaxel SDK imports are lazy so users without the extra can still
 import the package.
+
+学习提示：这是 Blaxel 云沙箱的 client/session 适配层，负责启动、执行命令、读写文件、
+暴露端口和归档工作区。它属于部署执行环境细节，不是 PPT Agent 早期主线。
 """
 
 from __future__ import annotations

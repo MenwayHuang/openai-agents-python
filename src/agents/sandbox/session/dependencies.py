@@ -1,3 +1,9 @@
+"""中文学习提示：sandbox session 的依赖容器。
+
+Dependencies 用字符串 key 管理运行时对象或工厂函数，支持缓存、拥有权和关闭清理。
+它像轻量级 DI 容器，适合把 Docker client、临时资源等运行期依赖挂到 session 上。
+"""
+
 from __future__ import annotations
 
 import inspect
@@ -64,6 +70,9 @@ async def _close_best_effort(value: object) -> None:
 
 class Dependencies:
     """Session-scoped dependency container for manifest entry materialization.
+
+    中文说明：轻量依赖容器。注册值或工厂后，session 内部可以按 key 获取依赖；
+    `owns_result` 类型的资源会在 close 时尽力释放，避免临时客户端或句柄泄漏。
 
     Sandbox clients hold a configured template of bindings and clone it for each created or resumed
     session. That gives each session its own cache and owned-resource lifecycle while still letting

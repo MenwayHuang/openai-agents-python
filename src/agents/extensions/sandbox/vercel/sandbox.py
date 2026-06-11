@@ -7,6 +7,9 @@ This module provides a Vercel-backed sandbox client/session implementation backe
 The `vercel` dependency is optional, so package-level exports should guard imports of this
 module. Within this module, Vercel SDK imports are normal so users with the extra installed get
 full type navigation.
+
+学习提示：这是 Vercel 沙箱适配层，负责 exec、文件读写、归档、端口暴露和错误转换。
+它属于部署 provider 细节，当前阶段了解边界即可。
 """
 
 from __future__ import annotations

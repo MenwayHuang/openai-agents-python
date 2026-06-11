@@ -1,3 +1,9 @@
+"""中文学习提示：S3 或 S3 兼容对象存储挂载配置。
+
+S3Mount 可以走 rclone，也可以走 Mountpoint。它展示了 provider 如何把 bucket、prefix、
+region、临时 token 等云参数转换成不同 mount pattern 所需的运行时配置。
+"""
+
 from __future__ import annotations
 
 import builtins
@@ -19,6 +25,8 @@ if TYPE_CHECKING:
 
 
 class S3Mount(_ConfiguredMount):
+    """把 S3 bucket 或 prefix 暴露成 sandbox 内目录。"""
+
     type: Literal["s3_mount"] = "s3_mount"
     bucket: str
     access_key_id: str | None = None

@@ -1,3 +1,9 @@
+"""中文学习提示：sandbox util 工具集合导出口。
+
+这里收拢深合并、Git 克隆、ls 解析、重试、tar 安全校验和文本截断等工具函数。
+它们服务于 sandbox 后端和工具输出处理，本身不承载业务流程。
+"""
+
 from .deep_merge import deep_merge
 from .github import clone_repo, ensure_git_available
 from .parse_utils import parse_ls_la

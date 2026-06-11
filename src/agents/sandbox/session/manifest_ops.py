@@ -1,3 +1,9 @@
+"""中文学习提示：ManifestApplier 的 session 便捷封装。
+
+这些函数让 BaseSandboxSession 可以直接调用 apply_manifest/provision_accounts/
+apply_entry_batch，而不需要在主类里塞太多实现细节。
+"""
+
 from __future__ import annotations
 
 from pathlib import Path

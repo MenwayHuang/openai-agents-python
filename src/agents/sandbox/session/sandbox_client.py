@@ -1,3 +1,10 @@
+"""中文学习提示：sandbox client 抽象。
+
+Client 负责创建、恢复和删除 session；Session 负责已经创建后的读写和执行。
+这个文件还负责把后端返回的 inner session 包成 SandboxSession，以统一审计事件、
+依赖生命周期和 trace 行为。
+"""
+
 from __future__ import annotations
 
 import abc
@@ -18,7 +25,10 @@ ClientOptionsT = TypeVar("ClientOptionsT")
 
 
 class BaseSandboxClientOptions(BaseModel):
-    """Polymorphic base for sandbox client options that need JSON round-trips."""
+    """Polymorphic base for sandbox client options that need JSON round-trips.
+
+    中文说明：不同后端有不同 options，通过 type 字段注册和反序列化。
+    """
 
     model_config = ConfigDict(arbitrary_types_allowed=True, frozen=True)
 
@@ -98,6 +108,8 @@ class BaseSandboxClientOptions(BaseModel):
 
 
 class BaseSandboxClient(abc.ABC, Generic[ClientOptionsT]):
+    """所有 sandbox backend client 的抽象基类。"""
+
     backend_id: str
     supports_default_options: bool = False
     _dependencies: Dependencies | None = None

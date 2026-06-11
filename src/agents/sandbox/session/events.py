@@ -1,3 +1,9 @@
+"""中文学习提示：sandbox 审计事件模型。
+
+每次 exec/read/write/start/finish 等操作都可以形成事件，交给 sink 记录或转发。
+事件里默认不包含大段命令输出，避免日志膨胀和敏感信息泄漏。
+"""
+
 from __future__ import annotations
 
 import uuid

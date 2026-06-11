@@ -1,3 +1,10 @@
+"""中文学习提示：Mount 的基础抽象和挂载策略。
+
+这里把“挂载什么”和“怎么挂载”拆开：Mount 描述云存储资源本身，MountStrategy 描述
+是在容器内运行 rclone/fuse/mountpoint，还是由 Docker volume 驱动挂载。这个分层很
+适合学习：资源配置、运行时策略和具体命令实现不要混在一个类里。
+"""
+
 from __future__ import annotations
 
 import abc
@@ -122,6 +129,8 @@ class DockerVolumeMountAdapter:
 
 
 class MountStrategyBase(BaseModel, abc.ABC):
+    """挂载策略基类；通过 type 字段自动注册子类。"""
+
     type: str
     _subclass_registry: ClassVar[dict[str, builtins.type[MountStrategyBase]]] = {}
 
@@ -221,6 +230,8 @@ class MountStrategyBase(BaseModel, abc.ABC):
 
 
 class InContainerMountStrategy(MountStrategyBase):
+    """在 sandbox 容器/环境内部执行挂载命令的策略。"""
+
     type: Literal["in_container"] = "in_container"
     pattern: MountPattern
 
@@ -270,6 +281,8 @@ class InContainerMountStrategy(MountStrategyBase):
 
 
 class DockerVolumeMountStrategy(MountStrategyBase):
+    """使用宿主 Docker volume driver 挂载远端存储的策略。"""
+
     type: Literal["docker_volume"] = "docker_volume"
     driver: str
     driver_options: dict[str, str] = Field(default_factory=dict)
@@ -337,6 +350,10 @@ MountStrategy = SerializeAsAny[MountStrategyBase]
 
 class Mount(BaseEntry):
     """A manifest entry that exposes external storage inside the sandbox workspace.
+
+    中文说明：这是所有远端挂载资源的抽象基类。Provider 子类只关心资源参数，
+    具体挂载动作委托给 mount_strategy，这样同一个 S3Mount 可以选择容器内 rclone
+    或 Docker volume 等不同实现。
 
     `Mount` holds strategy-independent mount metadata and delegates lifecycle behavior to
     `mount_strategy`. Provider subclasses describe what to mount; the strategy describes how the

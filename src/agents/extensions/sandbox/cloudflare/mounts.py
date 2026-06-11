@@ -1,3 +1,9 @@
+"""Cloudflare bucket 挂载策略。
+
+学习提示：本文件把 R2/S3/GCS 等对象存储转换成 Cloudflare sandbox 可识别的 bucket mount。
+重点理解配置归一化即可，具体云平台细节可以后续需要部署时再看。
+"""
+
 from __future__ import annotations
 
 from dataclasses import dataclass

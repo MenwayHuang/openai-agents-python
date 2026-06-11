@@ -1,3 +1,10 @@
+"""中文学习提示：Azure Blob 挂载配置。
+
+AzureBlobMount 描述 Azure Blob container、账号、密钥或托管身份等参数，并把这些参数
+转换成 rclone/fuse 可用的配置。这里涉及云凭据，生产系统必须通过环境变量或密钥系统
+注入，不能写入代码或日志。
+"""
+
 from __future__ import annotations
 
 import builtins
@@ -19,6 +26,8 @@ if TYPE_CHECKING:
 
 
 class AzureBlobMount(_ConfiguredMount):
+    """把 Azure Blob container 暴露成 sandbox 内目录。"""
+
     type: Literal["azure_blob_mount"] = "azure_blob_mount"
     account: str  # AZURE_STORAGE_ACCOUNT
     container: str  # AZURE_STORAGE_CONTAINER

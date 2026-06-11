@@ -1,6 +1,9 @@
 """
 Sandbox implementations for the sandbox package.
 
+中文学习提示：这里统一导出具体沙箱后端，例如本地 Unix 和 Docker。业务层通常不应
+直接依赖某个后端实现，而应通过 BaseSandboxClient/BaseSandboxSession 抽象来使用。
+
 This subpackage contains concrete session/client implementations for different
 execution environments (e.g. Docker, local Unix).
 """

@@ -1,9 +1,17 @@
+"""中文学习提示：把 bytes 迭代器包装成类文件对象。
+
+Docker 等后端经常返回分块迭代器；IteratorIO 让这些块可以像普通 IO stream 一样被
+tarfile、copy 或写入流程消费。
+"""
+
 import io
 from collections.abc import Callable, Iterator
 from typing import Any, cast
 
 
 class IteratorIO(io.IOBase):
+    """把 Iterator[bytes] 适配成可 read/readinto 的 IOBase。"""
+
     def __init__(
         self,
         it: Iterator[bytes],

@@ -1,3 +1,11 @@
+"""中文学习提示：沙箱里的 apply_patch 工具实现。
+
+它把模型输出的补丁文本解析成 ApplyPatchOperation，再通过 WorkspaceEditor 写入
+受控 workspace。重点看三个层次：工具输入语法、审批函数 needs_approval、真正写文件
+的 SandboxApplyPatchEditor。我们后续如果让 PPT Agent 改文件或模板，也应采用类似的
+结构化补丁，而不是让模型直接拼 shell 重定向写文件。
+"""
+
 from __future__ import annotations
 
 import json
@@ -136,6 +144,8 @@ _MOVE_TO = "*** Move to: "
 
 
 class SandboxApplyPatchEditor(ApplyPatchEditor):
+    """把通用 ApplyPatchEditor 适配到 SandboxSession 文件读写接口。"""
+
     def __init__(self, session: BaseSandboxSession, *, user: str | User | None = None) -> None:
         self.session = session
         self.user = user
@@ -151,6 +161,8 @@ class SandboxApplyPatchEditor(ApplyPatchEditor):
 
 
 class SandboxApplyPatchTool(CustomTool):
+    """模型可调用的补丁编辑工具。"""
+
     # `CustomTool` stores raw-input approval callbacks, but this sandbox wrapper exposes
     # operation-typed approval callbacks publicly and adapts them at runtime.
     needs_approval: bool | ApplyPatchApprovalFunction = False  # type: ignore[assignment]
@@ -229,6 +241,8 @@ class SandboxApplyPatchTool(CustomTool):
 
 
 def _parse_custom_tool_input(raw_input: str) -> list[ApplyPatchOperation]:
+    """解析 FREEFORM 自定义工具输入，兼容纯文本补丁和 JSON 包装。"""
+
     stripped_input = raw_input.lstrip()
     if stripped_input.startswith(("{", "[")):
         return _parse_apply_patch_json(raw_input)
@@ -279,6 +293,8 @@ def _parse_apply_patch_operation_json(operation: object) -> ApplyPatchOperation:
 
 
 def _parse_apply_patch_input(raw_input: str) -> list[ApplyPatchOperation]:
+    """解析 `*** Begin Patch` 文本格式，生成新增/删除/更新操作列表。"""
+
     lines = raw_input.splitlines()
     if not lines or lines[0] != _BEGIN_PATCH:
         raise ValueError("apply_patch input must start with '*** Begin Patch'")

@@ -1,3 +1,9 @@
+"""中文学习提示：workspace 压缩包安全解压。
+
+这个模块负责把 tar/zip 写入 sandbox 后再解压，同时检查路径穿越、符号链接、硬链接、
+成员数量和解压大小。凡是处理用户上传压缩包的系统，都需要类似的安全校验。
+"""
+
 from __future__ import annotations
 
 import io
@@ -44,6 +50,8 @@ class ArchiveResourceLimitError(ValueError):
 
 
 class WorkspaceArchiveExtractor:
+    """把 tar/zip 成员逐个安全写入 sandbox workspace。"""
+
     def __init__(
         self,
         *,

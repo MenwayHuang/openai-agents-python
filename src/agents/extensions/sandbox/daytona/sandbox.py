@@ -7,6 +7,9 @@ This module provides a Daytona-backed sandbox client/session implementation back
 The `daytona` dependency is optional, so package-level exports should guard imports of this
 module. Within this module, Daytona SDK imports are lazy so users without the extra can still
 import the package.
+
+学习提示：这是 Daytona SDK 的适配器，负责把 Daytona 的 workspace 生命周期和文件/命令 API
+翻译成 SDK 的统一 SandboxSession 行为。
 """
 
 from __future__ import annotations

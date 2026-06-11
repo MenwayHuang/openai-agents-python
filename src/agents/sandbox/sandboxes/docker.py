@@ -1,3 +1,10 @@
+"""中文学习提示：Docker sandbox 后端实现。
+
+这个文件负责用 Docker 容器承载 sandbox workspace：启动/复用容器、执行命令、读写文件、
+处理 PTY、导入导出 tar workspace、暴露端口和挂载外部存储。它是比较接近生产隔离的
+实现，后续如果 PPT Agent 需要安全执行代码或渲染任务，可以重点学习这种后端边界。
+"""
+
 import asyncio
 import errno
 import hashlib
@@ -98,12 +105,16 @@ _PREPARE_USER_PTY_PID_SCRIPT = (
 
 
 class DockerSandboxSessionState(SandboxSessionState):
+    """Docker 后端需要持久化的 session 状态。"""
+
     type: Literal["docker"] = "docker"
     image: str
     container_id: str
 
 
 class DockerSandboxClientOptions(BaseSandboxClientOptions):
+    """创建 Docker sandbox client 所需的配置。"""
+
     type: Literal["docker"] = "docker"
     image: str
     exposed_ports: tuple[int, ...] = ()

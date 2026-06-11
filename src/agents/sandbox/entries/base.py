@@ -1,3 +1,10 @@
+"""中文学习提示：Manifest entry 的基类和路径解析。
+
+BaseEntry 是所有 workspace 资源的共同父类，负责类型注册、权限元数据和 apply 协议。
+`resolve_workspace_path()` 是安全边界重点：它会拒绝 Windows 绝对路径、普通绝对路径和
+`..` 越权路径。以后 PPT Agent 处理用户上传模板或生成文件时，也应有类似路径白名单。
+"""
+
 from __future__ import annotations
 
 import abc
@@ -31,6 +38,8 @@ def resolve_workspace_path(
     *,
     allow_absolute_within_root: bool = False,
 ) -> Path:
+    """把 Manifest 里的相对路径解析为 workspace 内部路径，并阻止越权。"""
+
     if (windows_path := windows_absolute_path(rel)) is not None:
         raise InvalidManifestPathError(rel=windows_path.as_posix(), reason="absolute")
     rel_path = coerce_posix_path(rel)
@@ -81,6 +90,8 @@ def _path_exists(path: Path) -> bool:
 
 
 class BaseEntry(BaseModel, abc.ABC):
+    """所有 sandbox workspace 资源的抽象基类。"""
+
     type: str
     _subclass_registry: ClassVar[dict[str, builtins.type[BaseEntry]]] = {}
     _abstract_entry_base: ClassVar[bool] = False
@@ -140,6 +151,8 @@ class BaseEntry(BaseModel, abc.ABC):
 
     @classmethod
     def parse(cls, payload: object) -> BaseEntry:
+        """根据 payload.type 找到已注册子类并反序列化。"""
+
         if isinstance(payload, BaseEntry):
             return payload
         if not isinstance(payload, Mapping):

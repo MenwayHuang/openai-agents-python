@@ -1,3 +1,9 @@
+"""Codex 单轮运行配置。
+
+学习提示：TurnOptions 是每次调用 Codex 时的临时覆盖项，包括结构化输出 schema、
+取消信号和空闲超时。它比 ThreadOptions 更偏“本轮请求控制”。
+"""
+
 from __future__ import annotations
 
 import asyncio

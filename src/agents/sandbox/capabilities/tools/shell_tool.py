@@ -1,3 +1,11 @@
+"""中文学习提示：沙箱命令行工具实现。
+
+这里把 SandboxSession 的 `exec` 和 PTY stdin 能力包装成模型工具。关键点：
+命令输出会被截断以保护上下文；长时间运行的 TTY 命令会返回 session id；
+传输错误在标记为可重试时会尝试 fallback。后续做生产级 agent 时，命令执行类工具
+一定要有超时、输出截断、工作目录归一化和权限控制。
+"""
+
 from __future__ import annotations
 
 import shlex
@@ -39,6 +47,8 @@ def _format_response(
     process_id: int | None = None,
     original_token_count: int | None = None,
 ) -> str:
+    """把命令执行结果整理成模型能稳定读取的文本格式。"""
+
     sections = [f"Chunk ID: {uuid.uuid4().hex[:6]}", f"Wall time: {wall_time_seconds:.4f} seconds"]
 
     if exit_code is not None:
@@ -103,6 +113,8 @@ async def _run_one_shot_exec(
 
 
 class ExecCommandArgs(BaseModel):
+    """exec_command 工具的入参模型。"""
+
     cmd: str = Field(description="Shell command to execute.", min_length=1)
     workdir: str | None = Field(
         default=None,
@@ -150,6 +162,8 @@ class WriteStdinArgs(BaseModel):
 
 @dataclass(init=False)
 class ExecCommandTool(FunctionTool):
+    """执行一次命令或启动一个可交互 PTY 会话。"""
+
     tool_name: ClassVar[str] = "exec_command"
     args_model: ClassVar[type[ExecCommandArgs]] = ExecCommandArgs
     tool_description: ClassVar[str] = (
@@ -251,6 +265,8 @@ class ExecCommandTool(FunctionTool):
 
 @dataclass(init=False)
 class WriteStdinTool(FunctionTool):
+    """向已启动的 PTY 会话写入 stdin，或轮询其输出。"""
+
     tool_name: ClassVar[str] = "write_stdin"
     args_model: ClassVar[type[WriteStdinArgs]] = WriteStdinArgs
     tool_description: ClassVar[str] = (

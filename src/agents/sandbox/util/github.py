@@ -1,3 +1,9 @@
+"""中文学习提示：GitHub 仓库 artifact 的克隆工具。
+
+Manifest 支持把 GitHub repo 作为 workspace 输入时会用到这里。它优先浅克隆分支/标签，
+如果 ref 是 sha 则回退到 no-checkout 后 checkout。
+"""
+
 from __future__ import annotations
 
 import shutil

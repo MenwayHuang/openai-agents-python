@@ -7,6 +7,9 @@ This module provides a Runloop-backed sandbox client/session implementation back
 The `runloop_api_client` dependency is optional, so package-level exports should guard imports of
 this module. Within this module, Runloop SDK imports are lazy so users without the extra can still
 import the package.
+
+学习提示：这是 Runloop 平台适配层，除了普通 sandbox session，还包含平台 API 客户端、
+网络策略、secret、gateway 等生产执行环境能力。
 """
 
 from __future__ import annotations

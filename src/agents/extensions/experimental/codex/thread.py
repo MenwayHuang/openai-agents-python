@@ -1,3 +1,9 @@
+"""Codex Thread 高层会话封装。
+
+学习提示：Thread 把多轮 Codex CLI 调用组织成一个可继续的会话，
+负责输入归一化、输出 schema 临时文件、事件流解析、最终响应聚合和错误处理。
+"""
+
 from __future__ import annotations
 
 import asyncio

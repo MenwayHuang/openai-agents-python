@@ -1,3 +1,9 @@
+"""中文学习提示：workspace 快照持久化和恢复流程。
+
+快照用于暂停/恢复 sandbox workspace。这里会在持久化前计算 workspace 指纹，恢复时
+判断现场是否还能复用，避免不必要的全量还原；同时会跳过 runtime mount 等临时路径。
+"""
+
 from __future__ import annotations
 
 import hashlib
@@ -19,6 +25,8 @@ SNAPSHOT_FINGERPRINT_VERSION = "workspace_tar_sha256_v1"
 
 
 async def persist_snapshot(session: BaseSandboxSession) -> None:
+    """把当前 workspace 打包并交给 snapshot 后端持久化。"""
+
     if isinstance(session.state.snapshot, NoopSnapshot):
         return
 
@@ -48,6 +56,8 @@ async def persist_snapshot(session: BaseSandboxSession) -> None:
 
 
 async def restore_snapshot_into_workspace_on_resume(session: BaseSandboxSession) -> None:
+    """恢复 session 时清空 workspace 并把快照内容重新写入。"""
+
     await session._clear_workspace_root_on_resume()
     workspace_archive = await session.state.snapshot.restore(dependencies=session.dependencies)
     try:

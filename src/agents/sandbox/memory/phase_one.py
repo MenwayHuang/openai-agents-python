@@ -1,3 +1,9 @@
+"""中文学习提示：memory 生成的第一阶段。
+
+Phase one 面向“单个 rollout 文件”：读取本次运行轨迹，截断到模型可处理范围内，
+让模型抽取 slug、摘要和原始记忆。它不是最终记忆，而是 phase two 汇总前的中间材料。
+"""
+
 from __future__ import annotations
 
 import json
@@ -27,6 +33,8 @@ _PHASE_ONE_ROLLOUT_OMISSION_MARKER_TEMPLATE = (
 
 
 def normalize_rollout_slug(value: str) -> str:
+    """规范化模型生成的 rollout_slug，避免写出奇怪文件名。"""
+
     slug = value.strip()
     if slug.endswith(".md"):
         slug = slug[:-3]
@@ -43,6 +51,8 @@ def rollout_id_from_rollout_path(value: str) -> str:
 
 
 def render_phase_one_prompt(*, rollout_contents: str) -> str:
+    """把 rollout JSONL 渲染成 phase one 模型输入。"""
+
     payloads = [json.loads(line) for line in rollout_contents.splitlines() if line.strip()]
     if not payloads:
         raise ValueError("rollout_contents must contain at least one JSONL record")
@@ -105,6 +115,8 @@ async def run_phase_one(
     prompt: str,
     run_config: RunConfig,
 ) -> RolloutExtractionArtifacts:
+    """创建临时 SandboxAgent，要求模型按结构化 schema 返回抽取结果。"""
+
     from ...run import Runner
 
     if config.phase_one_model_settings is None:

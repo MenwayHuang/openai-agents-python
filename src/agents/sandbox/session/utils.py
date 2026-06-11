@@ -1,3 +1,9 @@
+"""中文学习提示：session 子包的小型工具函数。
+
+目前主要用于事件 JSON 序列化、输出安全截断和 stream 长度估算。它们被审计事件和
+instrumentation 使用，保持轻量即可。
+"""
+
 from __future__ import annotations
 
 import io
@@ -28,5 +34,7 @@ def _best_effort_stream_len(stream: io.IOBase) -> int | None:
 
 
 def event_to_json_line(event: SandboxSessionEvent) -> str:
+    """把审计事件压成一行 JSONL 文本。"""
+
     payload = event.model_dump(mode="json")
     return json.dumps(payload, separators=(",", ":"), sort_keys=True) + "\n"

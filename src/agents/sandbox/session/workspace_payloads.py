@@ -1,3 +1,9 @@
+"""中文学习提示：workspace 写入 payload 适配。
+
+session.write 接收类文件对象，这里统一把各种 stream 包装成二进制可读对象，并尽量
+推断 content_length，方便后续写入、审计和限制。
+"""
+
 from __future__ import annotations
 
 import io
@@ -9,6 +15,8 @@ from ..errors import WorkspaceWriteTypeError
 
 @dataclass(frozen=True)
 class WritePayload:
+    """规范化后的写入流和可选长度。"""
+
     stream: io.IOBase
     content_length: int | None = None
 

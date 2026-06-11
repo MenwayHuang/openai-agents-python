@@ -9,6 +9,9 @@ This module provides a Modal-backed sandbox client/session implementation backed
 Note: The `modal` dependency is intended to be optional (installed via an extra),
 so package-level exports should guard imports of this module. Within this module,
 we import Modal normally so IDEs can resolve and navigate Modal types.
+
+学习提示：这是 Modal 沙箱适配层，处理镜像选择、子进程执行、文件归档和 snapshot。
+部署到 Modal 前再深入即可，当前理解统一 SandboxSession 接口更重要。
 """
 
 from __future__ import annotations

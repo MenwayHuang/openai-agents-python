@@ -1,3 +1,9 @@
+"""Codex CLI 子进程执行器。
+
+学习提示：这个文件负责找到 codex 可执行文件、拼命令参数、启动异步子进程，
+并把 stdout JSONL 事件流暴露给 Thread/CodexTool。它是实验性代码执行能力的传输层。
+"""
+
 from __future__ import annotations
 
 import asyncio

@@ -1,3 +1,9 @@
+"""中文学习提示：sandbox memory 文件存储访问层。
+
+这里不直接关心模型怎么生成记忆，只负责确保目录结构、读写文本文件、维护 phase two
+输入选择记录。它相当于 memory 子系统的 repository/storage 层，职责边界比较清楚。
+"""
+
 from __future__ import annotations
 
 import asyncio
@@ -55,6 +61,8 @@ class PhaseTwoSelectionItem:
 
 @dataclass(frozen=True)
 class PhaseTwoInputSelection:
+    """phase two 本轮要处理、保留和移除的输入集合。"""
+
     selected: list[PhaseTwoSelectionItem]
     retained_rollout_ids: set[str]
     removed: list[PhaseTwoSelectionItem]
@@ -93,6 +101,8 @@ class SandboxMemoryStorage:
         return self.memories_dir / "phase_two_selection.json"
 
     async def ensure_layout(self) -> None:
+        """创建 memory 所需目录和空文件，保证后续读写不会因为路径缺失失败。"""
+
         async with self._layout_lock:
             await asyncio.gather(
                 self._session.mkdir(self.sessions_dir, parents=True),
@@ -126,6 +136,8 @@ class SandboxMemoryStorage:
         *,
         max_raw_memories_for_consolidation: int,
     ) -> PhaseTwoInputSelection:
+        """选择最近的 raw memory，并和上次选择记录对比得出增删变化。"""
+
         current_items = await self._list_current_selection_items()
         selected = current_items[:max_raw_memories_for_consolidation]
         prior_selected = await self.read_phase_two_selection()

@@ -1,3 +1,9 @@
+"""Codex payload 的 dict-like 适配基类。
+
+学习提示：_DictLike 让 dataclass 同时支持属性访问和部分 dict 访问方法，
+这样旧代码或工具链按 item[\"type\"] / item.get(...) 读取时也能兼容。
+"""
+
 from __future__ import annotations
 
 import dataclasses

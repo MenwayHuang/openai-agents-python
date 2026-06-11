@@ -1,3 +1,9 @@
+"""中文学习提示：异步重试工具。
+
+用于 Docker HTTP、远端 provider 等短暂失败场景。支持固定、线性、指数退避，并通过
+retry_if 回调决定异常是否可重试。
+"""
+
 from __future__ import annotations
 
 import asyncio

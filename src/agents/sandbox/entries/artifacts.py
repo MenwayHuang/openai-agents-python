@@ -1,3 +1,10 @@
+"""中文学习提示：工作区 artifact 类型。
+
+这里定义 Manifest 可以落到 sandbox workspace 的具体资源：目录、内联文件、本地文件、
+本地目录和 Git 仓库。安全重点是本地路径校验、checksum 校验、符号链接处理和 Git
+subpath 限制，防止用户输入绕出允许的工作区。
+"""
+
 from __future__ import annotations
 
 import errno
@@ -50,6 +57,8 @@ def _sha256_handle(handle: io.BufferedReader) -> str:
 
 
 class Dir(BaseEntry):
+    """在 sandbox workspace 中创建目录，并递归应用 children。"""
+
     type: Literal["dir"] = "dir"
     is_dir: bool = True
     children: dict[str | Path, BaseEntry] = Field(default_factory=dict)
@@ -90,6 +99,8 @@ class Dir(BaseEntry):
 
 
 class File(BaseEntry):
+    """把内存中的 bytes 直接写成 workspace 文件。"""
+
     type: Literal["file"] = "file"
     content: bytes
 
@@ -105,6 +116,8 @@ class File(BaseEntry):
 
 
 class LocalFile(BaseEntry):
+    """把宿主机允许范围内的单个本地文件复制进 sandbox。"""
+
     type: Literal["local_file"] = "local_file"
     src: Path
 

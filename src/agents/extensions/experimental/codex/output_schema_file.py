@@ -1,3 +1,9 @@
+"""为 Codex CLI 生成临时结构化输出 schema 文件。
+
+学习提示：Codex CLI 接收的是 schema 文件路径，所以 SDK 需要把 Python dict 写到临时文件，
+并在 finally 中清理。这里展示了“外部 CLI 需要文件输入”时的适配方式。
+"""
+
 from __future__ import annotations
 
 import json

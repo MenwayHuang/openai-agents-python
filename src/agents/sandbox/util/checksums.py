@@ -1,3 +1,9 @@
+"""中文学习提示：文件和 stream 的 SHA256 计算工具。
+
+用于校验本地文件复制、归档或缓存内容是否一致。注意 `sha256_io` 会尽量把 stream
+读完后恢复原位置，方便调用方继续使用同一个流。
+"""
+
 from __future__ import annotations
 
 import hashlib

@@ -1,3 +1,10 @@
+"""中文学习提示：把一次 agent run 转成 memory rollout。
+
+Rollout 是记忆系统的原始输入：它过滤掉不适合长期记忆的项，保留用户、助手和工具
+交互的关键轨迹，并写入 JSONL。这里的过滤逻辑很重要，避免把推理内容或不该持久化的
+系统提示写进长期记忆。
+"""
+
 from __future__ import annotations
 
 import io
@@ -84,6 +91,8 @@ def _normalize_jsonl_line(*, rollout_contents: str) -> bytes:
 
 
 def _should_include_memory_item(item: TResponseInputItem) -> bool:
+    """判断一条上下文 item 是否适合进入长期记忆原始材料。"""
+
     role = item.get("role")
     if role in {"developer", "system"}:
         return False
@@ -107,6 +116,8 @@ async def write_rollout(
     rollouts_path: str = "sessions",
     file_name: str | None = None,
 ) -> Path:
+    """把一段 rollout JSON 写入 sessions 目录下的 JSONL 文件。"""
+
     rollouts_dir_rel = Path(rollouts_path)
     _validate_relative_path(name="rollouts_path", path=rollouts_dir_rel)
     line_bytes = _normalize_jsonl_line(rollout_contents=rollout_contents)
@@ -204,6 +215,8 @@ def build_rollout_payload(
     interruptions: list[ToolApprovalItem],
     terminal_metadata: RolloutTerminalMetadata,
 ) -> dict[str, Any]:
+    """把输入、输出、异常和终态元数据整理成可持久化 payload。"""
+
     input_items = _sanitize_memory_items(ItemHelpers.input_to_new_input_list(input))
     generated_items = _to_dump_compatible(
         _sanitize_memory_items(run_items_to_input_items(new_items))

@@ -1,3 +1,10 @@
+"""中文学习提示：AWS S3 Files 文件系统挂载配置。
+
+S3FilesMount 面向 AWS S3 Files 这类更像文件系统的存储服务，依赖 sandbox 所在网络能
+访问 mount target。当前不是 PPT Agent 起步主线，先理解它是“已有文件系统资源的挂载
+声明”即可。
+"""
+
 from __future__ import annotations
 
 import builtins
@@ -20,6 +27,8 @@ if TYPE_CHECKING:
 
 class S3FilesMount(_ConfiguredMount):
     """Mount an existing Amazon S3 Files file system inside the sandbox.
+
+    中文说明：它不会创建 AWS 侧资源，只负责在已有网络和文件系统条件满足时执行挂载。
 
     S3 Files exposes objects in an S3 bucket through an S3 file system that is
     mounted with the Linux `s3files` file-system type. AWS documents the mount

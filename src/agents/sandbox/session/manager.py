@@ -1,3 +1,9 @@
+"""中文学习提示：sandbox instrumentation 事件分发器。
+
+Instrumentation 按操作类型套用 payload policy，然后把事件发给一个或多个 sink。
+这相当于沙箱运行时的审计/观测层，生产环境要特别关注输出脱敏和失败处理策略。
+"""
+
 from __future__ import annotations
 
 import asyncio

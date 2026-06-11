@@ -1,3 +1,9 @@
+"""中文学习提示：memory 相关 prompt 模板渲染。
+
+这里把 markdown prompt 模板加载进来，并用字符串替换填入 memory 路径、选择列表、
+extra_prompt 等变量。生产化时可以把这种 prompt 模板独立管理，方便版本审查。
+"""
+
 from __future__ import annotations
 
 import functools
@@ -56,6 +62,8 @@ def render_memory_read_prompt(
     memory_summary: str,
     live_update: bool = False,
 ) -> str:
+    """渲染运行前读取 memory_summary 的指令。"""
+
     update_instructions = (
         MEMORY_LIVE_UPDATE_INSTRUCTIONS.replace("{memory_dir}", memory_dir)
         if live_update
@@ -74,6 +82,8 @@ def render_memory_consolidation_prompt(
     selection: PhaseTwoInputSelection,
     extra_prompt: str | None = None,
 ) -> str:
+    """渲染 phase two 汇总长期记忆的 prompt。"""
+
     return (
         MEMORY_CONSOLIDATION_PROMPT_TEMPLATE.replace("{{ memory_root }}", memory_root)
         .replace(

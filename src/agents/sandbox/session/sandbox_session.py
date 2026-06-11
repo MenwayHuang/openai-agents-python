@@ -1,3 +1,10 @@
+"""中文学习提示：带审计和 tracing 的 SandboxSession 包装层。
+
+真实后端能力在 inner BaseSandboxSession 中；这个类负责把 exec/read/write/start/stop
+等操作包一层事件和 trace span。也就是说，业务调用看到的是统一 SandboxSession，
+但底层可以是 Docker、本地 Unix 或其他 provider。
+"""
+
 from __future__ import annotations
 
 import io
@@ -40,7 +47,10 @@ def instrumented_op(
     ok: Callable[[object], bool] | None = None,
     outputs: Callable[[object], tuple[bytes | None, bytes | None]] | None = None,
 ) -> Callable[[F], F]:
-    """Decorator to emit SandboxSessionEvents around a SandboxSession operation."""
+    """Decorator to emit SandboxSessionEvents around a SandboxSession operation.
+
+    中文说明：装饰器会在操作前后发 start/finish 事件，并在 tracing 开启时创建 span。
+    """
 
     def _decorator(fn: F) -> F:
         @wraps(fn)
@@ -213,7 +223,11 @@ def _hydrate_start_data(self: SandboxSession, data: io.IOBase) -> dict[str, obje
 
 
 class SandboxSession(BaseSandboxSession):
-    """Wrap sandbox operations in audit events and SDK tracing spans when tracing is active."""
+    """Wrap sandbox operations in audit events and SDK tracing spans when tracing is active.
+
+    中文说明：这是外部调用的统一 session 门面，几乎所有方法都会委托给 `_inner`，
+    同时补充审计、依赖绑定和错误包装。
+    """
 
     _inner: BaseSandboxSession
     _instrumentation: Instrumentation

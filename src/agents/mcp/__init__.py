@@ -1,3 +1,9 @@
+"""中文学习提示：MCP 子包的公开导出口。
+
+MCP 让 Agent 可以连接外部工具服务器。这里使用懒加载导出 server/manager，避免导入
+agents.mcp 时立刻加载所有传输实现。后续学习 MCP 时从 server.py 和 manager.py 继续看。
+"""
+
 from __future__ import annotations
 
 from importlib import import_module

@@ -1,3 +1,8 @@
+"""中文学习提示：解析 sandbox 命令输出的小工具。
+
+目前主要解析 `ls -la` 输出为 FileEntry。它是对不同后端文件列表能力的兜底适配。
+"""
+
 from ..files import EntryKind, FileEntry
 from ..types import Permissions
 

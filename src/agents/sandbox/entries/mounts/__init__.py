@@ -1,3 +1,9 @@
+"""中文学习提示：远端/外部存储挂载能力的统一导出口。
+
+Mount 让 sandbox 在工作区里看到 S3、GCS、R2、Box、Azure Blob 等远端资源。
+这不是 PPT Agent 当前的主线，但以后做企业资料库、模板库或用户文件空间时会很有用。
+"""
+
 from __future__ import annotations
 
 from .base import (

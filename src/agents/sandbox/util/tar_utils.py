@@ -1,3 +1,9 @@
+"""中文学习提示：tar 文件安全校验和改写工具。
+
+这里重点防止 archive slip：绝对路径、`..`、Windows drive、硬链接和不允许的符号链接
+都要拒绝。凡是解压用户或外部生成的 tar，都应先走这些校验。
+"""
+
 from __future__ import annotations
 
 import copy

@@ -1,3 +1,9 @@
+"""Codex CLI 事件模型。
+
+学习提示：Codex CLI 通过 JSONL 流输出 thread/turn/item 事件，本文件把这些
+事件转换成 dataclass，方便上层按类型处理启动、完成、失败、工具项更新等状态。
+"""
+
 from __future__ import annotations
 
 from collections.abc import Mapping

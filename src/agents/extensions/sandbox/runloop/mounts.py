@@ -1,4 +1,8 @@
-"""Mount strategy for Runloop sandboxes."""
+"""Mount strategy for Runloop sandboxes.
+
+学习提示：Runloop 挂载策略同样基于 rclone/FUSE，把对象存储挂进沙箱。
+读它时关注“安装依赖、检查 FUSE、构造挂载命令”这条准备链路。
+"""
 
 from __future__ import annotations
 

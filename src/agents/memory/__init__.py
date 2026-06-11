@@ -1,3 +1,10 @@
+"""中文学习提示：SDK 顶层 memory/session 能力导出口。
+
+这里导出 OpenAI Conversations、Responses Compaction、SQLite 等会话记忆实现。
+它和 sandbox/memory 不同：这里偏“对话 session 历史”，sandbox/memory 偏“沙箱运行后
+生成长期记忆文件”。
+"""
+
 from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any

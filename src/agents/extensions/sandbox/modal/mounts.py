@@ -1,3 +1,9 @@
+"""Modal 云桶挂载策略。
+
+学习提示：Modal 支持原生 cloud bucket mount，本文件负责把 SDK 的通用 Mount
+转换成 Modal 需要的挂载配置。
+"""
+
 from __future__ import annotations
 
 from dataclasses import dataclass

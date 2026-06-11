@@ -1,3 +1,10 @@
+"""中文学习提示：所有 sandbox 后端必须实现的底层 session 抽象。
+
+BaseSandboxSession 定义了启动、停止、读写文件、执行命令、应用 Manifest、快照恢复、
+路径校验和归档等公共流程。具体 Docker/Unix/远端后端只实现少数抽象钩子。阅读时先看
+`start()` 的调用顺序，再看抽象方法如何被 Docker 或 UnixLocal 实现。
+"""
+
 import abc
 import io
 import shlex
@@ -98,6 +105,8 @@ _RM_ACCESS_CHECK_SCRIPT = (
 
 
 class BaseSandboxSession(abc.ABC):
+    """沙箱会话底座：编排通用生命周期，委托后端实现具体 I/O 和执行。"""
+
     state: SandboxSessionState
     _dependencies: Dependencies | None = None
     _dependencies_closed: bool = False
@@ -123,6 +132,12 @@ class BaseSandboxSession(abc.ABC):
     _archive_limits: SandboxArchiveLimits | None = None
 
     async def start(self) -> None:
+        """启动后端并准备 workspace。
+
+        中文说明：顺序非常关键：先启动/重连后端，再探测是否可复用 workspace，
+        然后准备根目录、安装 runtime helper、应用 manifest/快照，最后标记 ready。
+        """
+
         try:
             await self._ensure_backend_started()
             self._start_workspace_root_ready = self.state.workspace_root_ready

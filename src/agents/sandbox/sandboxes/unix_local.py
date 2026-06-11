@@ -1,3 +1,10 @@
+"""中文学习提示：本地 Unix sandbox 后端实现。
+
+它不启动容器，而是在当前机器的临时/指定目录中执行命令和文件操作。优点是轻量，
+缺点是隔离能力弱，因此更适合本地开发和受信环境。生产安全执行通常应优先考虑 Docker
+或远端 sandbox provider。
+"""
+
 import sys
 
 if sys.platform == "win32":  # pragma: no cover
@@ -85,11 +92,15 @@ def _restore_pty_child_signal_defaults() -> None:
 
 
 class UnixLocalSandboxSessionState(SandboxSessionState):
+    """本地 Unix 后端需要持久化的 session 状态。"""
+
     type: Literal["unix_local"] = "unix_local"
     workspace_root_owned: bool = False
 
 
 class UnixLocalSandboxClientOptions(BaseSandboxClientOptions):
+    """创建本地 Unix sandbox client 所需的配置。"""
+
     type: Literal["unix_local"] = "unix_local"
     exposed_ports: tuple[int, ...] = ()
 
@@ -123,6 +134,9 @@ class UnixLocalSandboxSession(BaseSandboxSession):
     """
     Unix-only session implementation that runs commands on the host and uses the host filesystem
     as the workspace (rooted at `self.state.manifest.root`).
+
+    中文说明：这里实现 BaseSandboxSession 的抽象方法，底层直接调用本机 subprocess、
+    os、tarfile 等能力。因为运行在宿主机上，路径校验和权限边界尤其重要。
     """
 
     state: UnixLocalSandboxSessionState

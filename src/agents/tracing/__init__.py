@@ -1,3 +1,9 @@
+"""中文学习提示：tracing 追踪能力的公开导出口。
+
+这里导出 trace/span 创建函数、SpanData 类型、TraceProvider 和 processor 管理函数。
+生产级 agent 系统需要 tracing 来定位模型调用、工具调用、handoff 和错误边界。
+"""
+
 from .config import TracingConfig
 from .context import TraceCtxManager
 from .create import (

@@ -1,3 +1,9 @@
+"""中文学习提示：写入 sandbox 的运行时辅助脚本。
+
+这些 shell/python 脚本会安装到 sandbox 内，用来做路径真实解析、workspace 指纹计算等
+底层操作。把复杂逻辑做成受版本控制的 helper，比在每个后端里手写命令更容易审查。
+"""
+
 from __future__ import annotations
 
 import hashlib

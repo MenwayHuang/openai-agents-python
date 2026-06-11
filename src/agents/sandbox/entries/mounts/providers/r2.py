@@ -1,3 +1,9 @@
+"""中文学习提示：Cloudflare R2 挂载配置。
+
+R2 是 S3 兼容对象存储，因此这里主要生成 rclone 的 s3/provider=Cloudflare 配置。
+注意 `_validate_credential_pair()`：访问密钥必须成对出现，这是凭据校验的基本模式。
+"""
+
 from __future__ import annotations
 
 import builtins
@@ -13,6 +19,8 @@ if TYPE_CHECKING:
 
 
 class R2Mount(_ConfiguredMount):
+    """把 Cloudflare R2 bucket 挂载到 sandbox workspace。"""
+
     type: Literal["r2_mount"] = "r2_mount"
     bucket: str
     account_id: str

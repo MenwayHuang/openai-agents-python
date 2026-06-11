@@ -1,3 +1,9 @@
+"""中文学习提示：PTY 交互式命令的公共类型和限制。
+
+PTY 用于长进程或需要 stdin 的命令。这里统一限制等待时间、进程数量和输出截断，
+避免模型启动过多交互会话或把上下文塞爆。
+"""
+
 from __future__ import annotations
 
 import random
@@ -20,6 +26,8 @@ PTY_PROCESS_ID_MAX_EXCLUSIVE = 100_000
 
 @dataclass(frozen=True)
 class PtyExecUpdate:
+    """一次 PTY 执行/轮询返回给工具层的更新信息。"""
+
     process_id: int | None
     output: bytes
     exit_code: int | None

@@ -1,3 +1,9 @@
+"""中文学习提示：快照/归档前后的临时挂载生命周期。
+
+远端挂载通常是 runtime 资源，不应被持久化进 workspace 快照。这里在归档前临时卸载
+ephemeral mount，归档后再恢复，失败时还会合并原始错误和恢复错误。
+"""
+
 from __future__ import annotations
 
 from collections.abc import Awaitable, Callable

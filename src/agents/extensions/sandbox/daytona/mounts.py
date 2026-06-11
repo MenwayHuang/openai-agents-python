@@ -5,6 +5,9 @@ Provides ``DaytonaCloudBucketMountStrategy``, a wrapper around the generic
 the sandbox before delegating to :class:`RcloneMountPattern`.
 
 Supports S3, R2, GCS, Azure Blob, and Box mounts through a single code path.
+
+学习提示：这里通过 rclone/FUSE 支持多种对象存储挂载。它是“把云存储变成沙箱文件路径”
+的实现细节，安全上要特别注意只读挂载和命令白名单。
 """
 
 from __future__ import annotations

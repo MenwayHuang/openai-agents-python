@@ -10,6 +10,9 @@ Note: The `e2b` and `e2b-code-interpreter` dependencies are intended to be optio
 (installed via extras), so package-level exports should guard imports of this module.
 Within this module, E2B SDK imports are lazy so users without the extra can still
 import the package.
+
+学习提示：这是 E2B 沙箱的完整适配层，包含连接、执行、文件归档、快照引用和端口暴露。
+如果未来要让 PPT Agent 安全运行转换脚本，可以参考这种 provider 边界。
 """
 
 from __future__ import annotations

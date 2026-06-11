@@ -1,3 +1,9 @@
+"""中文学习提示：sandbox session 子包导出口。
+
+Session 是沙箱运行时的核心抽象：负责启动后端、应用 manifest、执行命令、读写文件、
+处理快照和发审计事件。这里用 `__getattr__` 懒加载，避免包初始化时产生循环依赖。
+"""
+
 from __future__ import annotations
 
 from typing import TYPE_CHECKING

@@ -1,3 +1,10 @@
+"""中文学习提示：具体挂载命令模式。
+
+Provider 负责描述云资源，Pattern 负责把资源配置翻译成实际命令，例如 rclone mount、
+Mountpoint S3、FUSE 或 s3files。安全重点是敏感配置文件权限、命令错误脱敏、mount/unmount
+成对执行，以及快照前后要正确卸载和恢复。
+"""
+
 from __future__ import annotations
 
 import abc
@@ -145,6 +152,8 @@ async def _read_text_if_present(session: BaseSandboxSession, path: Path) -> str:
 
 
 class MountPatternBase(BaseModel, abc.ABC):
+    """所有 in-container mount pattern 的基类。"""
+
     @abc.abstractmethod
     async def apply(
         self,
@@ -165,6 +174,8 @@ class MountPatternBase(BaseModel, abc.ABC):
 
 
 class FuseMountPattern(MountPatternBase):
+    """通过 fuse 相关工具把远端存储挂到容器内。"""
+
     type: Literal["fuse"] = "fuse"
     allow_other: bool = Field(default=True)
     log_type: str = Field(default="syslog")
@@ -416,6 +427,8 @@ class FuseMountPattern(MountPatternBase):
 
 
 class MountpointMountPattern(MountPatternBase):
+    """使用 Mountpoint 类工具挂载 S3/GCS 兼容对象存储。"""
+
     type: Literal["mountpoint"] = "mountpoint"
 
     @dataclass(frozen=True)
@@ -532,6 +545,8 @@ class MountpointMountPattern(MountPatternBase):
 
 
 class S3FilesMountPattern(MountPatternBase):
+    """使用 AWS S3 Files 的 mount helper 挂载文件系统。"""
+
     type: Literal["s3files"] = "s3files"
 
     @dataclass(frozen=True)
@@ -638,6 +653,8 @@ def _supplement_rclone_config_text(
 
 
 class RcloneMountPattern(MountPatternBase):
+    """使用 rclone 配置和命令挂载多种远端存储。"""
+
     type: Literal["rclone"] = "rclone"
     mode: Literal["fuse", "nfs"] = Field(default="fuse")
     remote_name: str | None = None

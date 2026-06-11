@@ -1,3 +1,10 @@
+"""中文学习提示：sandbox 上下文压缩能力。
+
+当对话、工具输出或文件内容太长时，Compaction 会根据模型上下文窗口和阈值生成
+压缩策略参数。PPT Agent 以后做长任务时也会遇到类似问题：不能无限把历史都塞回
+模型，而要有可解释的压缩阈值和保留策略。
+"""
+
 from __future__ import annotations
 
 import abc
@@ -23,6 +30,8 @@ def _model_context_windows(models: tuple[str, ...], context_window: int) -> dict
 
 
 _MODEL_CONTEXT_WINDOWS: dict[str, int] = {
+    # 中文说明：这里维护常见模型的上下文窗口估算值，用于动态计算压缩阈值。
+    # 模型名称会先归一化，所以带供应商前缀、点号或日期的名字可以共用查找逻辑。
     **_model_context_windows(
         (
             "gpt-5.4",
@@ -112,10 +121,14 @@ _MODEL_CONTEXT_WINDOWS: dict[str, int] = {
 
 
 class CompactionModelInfo(BaseModel):
+    """模型上下文窗口信息。"""
+
     context_window: int
 
     @classmethod
     def maybe_for_model(cls, model: str) -> CompactionModelInfo | None:
+        """根据模型名查上下文窗口；未知模型返回 None，让上层使用默认策略。"""
+
         context_window = _MODEL_CONTEXT_WINDOWS.get(_model_lookup_key(model))
         if context_window is None:
             return None
@@ -130,6 +143,8 @@ class CompactionModelInfo(BaseModel):
 
 
 class CompactionPolicy(BaseModel, abc.ABC):
+    """压缩策略基类：根据采样参数决定何时触发 compaction。"""
+
     type: str
 
     @abc.abstractmethod
@@ -137,6 +152,8 @@ class CompactionPolicy(BaseModel, abc.ABC):
 
 
 class StaticCompactionPolicy(CompactionPolicy):
+    """固定阈值策略：上下文超过指定 token 估算值后触发压缩。"""
+
     type: Literal["static"] = "static"
     threshold: int = Field(default=_DEFAULT_COMPACT_THRESHOLD)
 
@@ -146,6 +163,8 @@ class StaticCompactionPolicy(CompactionPolicy):
 
 
 class DynamicCompactionPolicy(CompactionPolicy):
+    """动态阈值策略：按模型上下文窗口的一定比例触发压缩。"""
+
     type: Literal["dynamic"] = "dynamic"
     model_info: CompactionModelInfo
     threshold: float = Field(ge=0, le=1, default=0.9)
@@ -156,6 +175,8 @@ class DynamicCompactionPolicy(CompactionPolicy):
 
 
 class Compaction(Capability):
+    """把上下文压缩能力挂到 sandbox run 中。"""
+
     type: Literal["compaction"] = "compaction"
     policy: CompactionPolicy | None = Field(default=None)
 
@@ -182,6 +203,8 @@ class Compaction(Capability):
         return policy.model_dump()
 
     def sampling_params(self, sampling_params: dict[str, Any]) -> dict[str, Any]:
+        """给模型请求补充 compact_threshold 等参数。"""
+
         policy = self.policy
         if policy is None:
             model = sampling_params.get("model")

@@ -1,3 +1,8 @@
+"""中文学习提示：递归合并 dict 的小工具。
+
+当两个值都是 `dict[str, object]` 时继续深合并，否则右侧值覆盖左侧值。
+"""
+
 from typing import TypeGuard
 
 

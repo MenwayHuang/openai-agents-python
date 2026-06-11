@@ -1,3 +1,9 @@
+"""中文学习提示：Google Cloud Storage 挂载配置。
+
+GCSMount 支持原生 GCS 凭据，也支持用 HMAC 凭据走 S3 兼容模式。这里可以学习一个
+实用设计：同一种云资源可能有多种认证/挂载路径，代码通过小方法拆开选择逻辑。
+"""
+
 from __future__ import annotations
 
 import builtins
@@ -19,6 +25,8 @@ if TYPE_CHECKING:
 
 
 class GCSMount(_ConfiguredMount):
+    """把 GCS bucket 或其 prefix 暴露成 sandbox 内目录。"""
+
     type: Literal["gcs_mount"] = "gcs_mount"
     bucket: str
     access_id: str | None = None

@@ -1,3 +1,9 @@
+"""中文学习提示：Box 云盘挂载配置。
+
+BoxMount 把 Box 的授权参数转换成 rclone remote 配置。它属于第三方文件空间集成，
+当前 PPT Agent 起步阶段可以先了解“provider 配置 -> rclone 配置”的模式。
+"""
+
 from __future__ import annotations
 
 import builtins
@@ -14,6 +20,9 @@ if TYPE_CHECKING:
 
 class BoxMount(_ConfiguredMount):
     """Mount a Box folder using rclone.
+
+    中文说明：把 Box 文件空间挂载到 sandbox workspace，生产使用时要重点保护
+    token、client_secret、JWT 配置等敏感凭据。
 
     See Box's JWT setup guide (https://developer.box.com/guides/authentication/jwt/jwt-setup/)
     and rclone's Box guide (https://rclone.org/box/). Non-interactive mounts require

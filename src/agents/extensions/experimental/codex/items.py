@@ -1,3 +1,9 @@
+"""Codex CLI item payload 模型。
+
+学习提示：Codex 的事件里会包含命令执行、文件修改、MCP 工具调用、推理、待办等 item。
+这些 dataclass 只负责把 JSON payload 变成结构化对象，不负责执行任何动作。
+"""
+
 from __future__ import annotations
 
 from collections.abc import Mapping

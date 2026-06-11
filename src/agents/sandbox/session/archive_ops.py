@@ -1,3 +1,9 @@
+"""中文学习提示：archive 写入和解压的 session 适配层。
+
+这里把 BaseSandboxSession 的 mkdir/write/ls 能力组装成 WorkspaceArchiveExtractor。
+它先把输入流 spool 到临时文件，因为写入和解压都要消费同一份数据。
+"""
+
 from __future__ import annotations
 
 import io
@@ -21,6 +27,8 @@ async def extract_archive(
     compression_scheme: Literal["tar", "zip"] | None = None,
     archive_limits: SandboxArchiveLimits | None = None,
 ) -> None:
+    """根据压缩格式把 archive 写入 workspace 并解压到同级目录。"""
+
     if archive_limits is not None:
         archive_limits.validate()
 

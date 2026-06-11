@@ -1,3 +1,9 @@
+"""中文学习提示：把 Manifest 应用到 workspace 的执行器。
+
+ManifestApplier 负责创建根目录、创建用户/组、并发应用 entry。它把抽象 Manifest
+变成真实文件、目录、Git 仓库和挂载，是 session 启动流程里的关键一步。
+"""
+
 from __future__ import annotations
 
 from collections.abc import Awaitable, Callable, Sequence
@@ -12,6 +18,8 @@ from ..workspace_paths import coerce_posix_path, posix_path_as_path
 
 
 class ManifestApplier:
+    """把 Manifest entries 物化到 sandbox workspace。"""
+
     def __init__(
         self,
         *,

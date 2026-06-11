@@ -1,3 +1,10 @@
+"""中文学习提示：沙箱图片查看工具。
+
+模型本身不能直接“打开文件系统图片”，所以该工具从 workspace 读取图片、校验大小和
+MIME 类型，再返回结构化图片输出。对 PPT Agent 来说，后续检查模板截图、生成封面图
+或视觉 QA 时，这类工具会非常有参考价值。
+"""
+
 from __future__ import annotations
 
 import base64
@@ -21,6 +28,8 @@ _SVG_SNIFF_BYTES = 2048
 
 
 def _detect_image_mime_type(path: Path, payload: bytes) -> str | None:
+    """通过文件头优先识别图片类型，文件名后缀只作为兜底。"""
+
     if payload.startswith(b"\x89PNG\r\n\x1a\n"):
         return "image/png"
     if payload.startswith(b"\xff\xd8\xff"):
@@ -62,6 +71,8 @@ def _coerce_payload_bytes(payload: object) -> bytes:
 
 
 class ViewImageArgs(BaseModel):
+    """view_image 工具入参。"""
+
     path: str = Field(
         description="Path to the image file. Absolute and relative workspace paths are supported.",
         min_length=1,
@@ -70,6 +81,8 @@ class ViewImageArgs(BaseModel):
 
 @dataclass(init=False)
 class ViewImageTool(FunctionTool):
+    """读取 workspace 图片并返回 ToolOutputImage。"""
+
     tool_name: ClassVar[str] = "view_image"
     args_model: ClassVar[type[ViewImageArgs]] = ViewImageArgs
     tool_description: ClassVar[str] = (

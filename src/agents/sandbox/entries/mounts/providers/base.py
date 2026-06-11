@@ -1,3 +1,10 @@
+"""中文学习提示：provider-backed mount 的公共工具。
+
+`_ConfiguredMount` 收拢 provider 之间通用的路径拼接、rclone 配置生成、session id
+校验等逻辑，具体 S3/GCS/R2/Box/Azure 子类只补各自云厂商参数。这个抽象能减少大量
+重复，也能把敏感配置处理统一到一处。
+"""
+
 from __future__ import annotations
 
 import abc
@@ -25,6 +32,9 @@ if TYPE_CHECKING:
 
 class _ConfiguredMount(Mount, abc.ABC):
     """Base class for provider-backed mounts that can derive both strategy shapes from one model.
+
+    中文说明：带云存储配置的 Mount 基类，负责把 provider 参数转成 in-container
+    或 docker-volume 两种策略可使用的配置。
 
     Subclasses keep provider-specific translation logic here:
     - in-container: build a `MountPatternConfig` for the selected `MountPattern`.

@@ -1,3 +1,9 @@
+"""中文学习提示：sandbox session 的可序列化状态。
+
+SessionState 保存 session_id、snapshot、manifest、暴露端口和 workspace ready 状态。
+不同后端会继承它并增加 container_id、workspace_root 等字段；通过 type 字段反序列化。
+"""
+
 from __future__ import annotations
 
 import uuid
@@ -13,6 +19,8 @@ SessionStateClass = type["SandboxSessionState"]
 
 
 class SandboxSessionState(BaseModel):
+    """所有 sandbox session 状态模型的基类。"""
+
     model_config = ConfigDict(arbitrary_types_allowed=True)
     type: str
     session_id: uuid.UUID = Field(default_factory=uuid.uuid4)

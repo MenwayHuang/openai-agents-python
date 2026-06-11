@@ -1,3 +1,10 @@
+"""中文学习提示：sandbox memory 的后台生成管理器。
+
+它在 session 运行期间收集每轮结果，写入 rollout JSONL；session 结束前 flush 时，
+先逐个 rollout 跑 phase one，最后跑一次 phase two 汇总。这个设计适合学习：
+主流程不被记忆生成阻塞，关闭会话时再做一致性收尾。
+"""
+
 from __future__ import annotations
 
 import asyncio
@@ -47,6 +54,8 @@ class SandboxMemoryGenerationManager:
     """
 
     def __init__(self, *, session: BaseSandboxSession, memory: Memory) -> None:
+        """绑定 session 和 Memory 配置，并注册 session 停止前的 flush 钩子。"""
+
         if memory.generate is None:
             raise ValueError("SandboxMemoryGenerationManager requires `Memory.generate` to be set.")
 
@@ -140,10 +149,14 @@ class SandboxMemoryGenerationManager:
                 _unregister_memory_generation_manager(session=self._session, manager=self)
 
     def _ensure_worker(self) -> None:
+        """懒启动后台 worker，避免没有 rollout 时创建多余任务。"""
+
         if self._worker_task is None or self._worker_task.done():
             self._worker_task = asyncio.create_task(self._worker())
 
     async def _worker(self) -> None:
+        """按队列顺序处理 rollout 文件，每个文件生成 raw memory 和 summary。"""
+
         while True:
             queue_item = await self._queue.get()
             try:
@@ -156,6 +169,8 @@ class SandboxMemoryGenerationManager:
                 self._queue.task_done()
 
     async def _process_rollout_file(self, rollout_file_name: str) -> None:
+        """针对单个 rollout JSONL 调模型抽取记忆片段，并写入中间文件。"""
+
         rollout_contents = await self._storage.read_text(
             self._storage.sessions_dir / rollout_file_name
         )
@@ -209,6 +224,8 @@ class SandboxMemoryGenerationManager:
         self._pending_phase_two_rollout_ids.append(rollout_id)
 
     async def _run_phase_two(self) -> None:
+        """选择最近的 raw memory，调用模型进行全局记忆汇总。"""
+
         if not self._pending_phase_two_rollout_ids:
             return
 
