@@ -33,6 +33,12 @@ Usage::
 
 from __future__ import annotations
 
+# 中文导入说明：
+# - pymongo.asynchronous 是 MongoDB 官方 Python 客户端的异步 API。
+# - DriverInfo 会把 openai-agents 的名字和版本带到 MongoDB 握手信息里，方便服务端识别客户端来源。
+# - weakref 用于在不阻止对象释放的前提下跟踪 client 生命周期。
+# - importlib.metadata.version 读取当前包版本；失败时允许降级为 None。
+
 import json
 import threading
 import weakref

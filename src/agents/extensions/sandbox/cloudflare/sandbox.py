@@ -14,6 +14,12 @@ we import aiohttp normally so IDEs can resolve and navigate types.
 
 from __future__ import annotations
 
+# 中文导入说明：
+# - aiohttp 是第三方异步 HTTP/WebSocket 客户端，Cloudflare sandbox 通过它和远端 Worker 通信。
+# - base64 用于把归档或二进制数据编码成可传输文本。
+# - contextlib.suppress 是官方工具，用于清理阶段忽略非关键异常。
+# - urllib.parse.quote 用于安全拼接 URL path，避免特殊字符破坏请求。
+
 import asyncio
 import base64
 import io

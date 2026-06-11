@@ -8,6 +8,12 @@
 
 from __future__ import annotations
 
+# 中文导入说明：
+# - os 用于读取环境变量，例如 OPENAI_API_KEY、OPENAI_BASE_URL。
+# - weakref 用于缓存 WebSocket Model 时不强行延长事件循环生命周期。
+# - httpx.AsyncClient 是共享连接池；DefaultAsyncHttpxClient 是 OpenAI SDK 提供的默认异步 HTTP 客户端。
+# - AsyncOpenAI 是 OpenAI 官方异步客户端，Provider 会创建或复用它。
+
 import asyncio
 import os
 import weakref

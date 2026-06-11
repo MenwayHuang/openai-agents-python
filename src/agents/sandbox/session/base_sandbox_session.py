@@ -5,6 +5,12 @@ BaseSandboxSession 定义了启动、停止、读写文件、执行命令、应�
 `start()` 的调用顺序，再看抽象方法如何被 Docker 或 UnixLocal 实现。
 """
 
+# 中文导入说明：
+# - abc 是官方抽象基类库，用来声明“后端必须实现哪些方法”。
+# - io/pathlib/shlex 是官方 I/O、路径和 shell 转义工具，沙箱读写文件和执行命令会频繁使用。
+# - typing_extensions.Self 表示方法返回当前类实例，兼容较旧 Python。
+# - archive_ops/manifest_ops/snapshot_lifecycle 是 session 的三个重要子流程：归档、物化 Manifest、快照。
+
 import abc
 import io
 import shlex

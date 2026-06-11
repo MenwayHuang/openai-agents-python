@@ -23,6 +23,11 @@ Usage::
 
 from __future__ import annotations
 
+# 中文导入说明：
+# - asyncio/json/time 是官方库：分别处理异步锁、JSON 序列化和 TTL/时间戳。
+# - redis.asyncio 是 Redis 官方 Python 客户端的异步接口，适合 FastAPI/asyncio 服务使用。
+# - `_optional_imports` 用来在用户没安装 `openai-agents[redis]` 时给出更友好的错误提示。
+
 import asyncio
 import json
 import time

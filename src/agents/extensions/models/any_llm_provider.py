@@ -1,5 +1,9 @@
 from typing import Literal
 
+# 中文导入说明：
+# - 这个 Provider 本身不直接导入 any_llm；真正的第三方依赖在 AnyLLMModel 里动态导入。
+# - get_default_model 来自项目内部默认模型配置，用来生成 `openai/<model>` 形式的默认模型名。
+
 from ...models.default_models import get_default_model
 from ...models.interface import Model, ModelProvider
 from .any_llm_model import AnyLLMModel

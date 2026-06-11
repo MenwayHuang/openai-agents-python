@@ -10,6 +10,12 @@
 
 from __future__ import annotations
 
+# 中文导入说明：
+# - sqlite3 是 Python 官方内置数据库，适合本地轻量存储，不需要单独安装服务。
+# - threading/threading.local 用于给不同线程维护独立连接，避免 SQLite 跨线程误用。
+# - contextmanager 用来写 `with` 风格的连接管理，保证使用后清理。
+# - json 用来把 Responses input item 序列化进数据库字段。
+
 import asyncio
 import json
 import sqlite3

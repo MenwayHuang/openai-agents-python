@@ -25,6 +25,11 @@ Usage::
 
 from __future__ import annotations
 
+# 中文导入说明：
+# - dapr.aio.clients.DaprClient 是 Dapr 官方异步客户端，用来访问 Dapr sidecar。
+# - Concurrency/Consistency/StateOptions 是 Dapr state store 写入时的一致性和并发控制选项。
+# - random/time 用于重试退避，避免多个并发写同时重试造成压力。
+
 import asyncio
 import json
 import random

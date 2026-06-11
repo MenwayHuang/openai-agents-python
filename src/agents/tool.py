@@ -7,6 +7,13 @@ from __future__ import annotations
 # computer/shell/apply_patch/MCP/custom tool 等高级能力。
 # 自研 agent-service 初期重点读 FunctionTool、function_tool、invoke_function_tool 这几段即可。
 
+# 中文导入说明：
+# - ast/inspect/get_type_hints 用来理解 Python 函数结构和类型注解，是自动生成工具 schema 的基础。
+# - asyncio 让工具支持异步执行；weakref 用来保存弱引用，避免缓存阻止对象释放。
+# - openai.types.responses.* 是 OpenAI 官方工具参数类型，例如 web_search、file_search、computer tool。
+# - pydantic 负责校验工具输入输出；ValidationError 会在模型传错参数时出现。
+# - typing_extensions.ParamSpec/TypedDict 等用于表达“函数参数列表”和字典结构类型。
+
 import ast
 import asyncio
 import copy

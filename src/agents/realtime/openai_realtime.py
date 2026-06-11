@@ -4,6 +4,13 @@ from __future__ import annotations
 # 它负责建连、发送客户端事件、解析服务端事件、音频 base64 编解码、工具调用事件转换。
 # 当前 PPT Agent 不需要深入这里，但做实时语音/实时协作时，这是 Provider 适配的关键样板。
 
+# 中文导入说明：
+# - websockets 是第三方 WebSocket 客户端库，用于和 OpenAI Realtime API 保持长连接。
+# - base64 用来把音频 bytes 编成文本，方便放进 JSON 事件发送。
+# - pydantic 用于校验 Realtime 配置和事件结构。
+# - openai.types.realtime.* 是 OpenAI 官方 SDK 的实时 API 类型，名字很长但本质只是数据结构。
+# - datetime/math/os 等是官方库，用于时间戳、音频计算和环境变量读取。
+
 import asyncio
 import base64
 import inspect

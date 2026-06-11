@@ -10,6 +10,13 @@
 
 from __future__ import annotations
 
+# 中文导入说明：
+# - dataclasses.fields/replace 用来读取和复制配置对象，便于把 Agent 和 RunConfig 的参数合并。
+# - openai.Omit 是 OpenAI SDK 的特殊值，表示“这个参数不要发给 API”，不同于 None。
+# - openai._types.Body/Query 是 OpenAI SDK 请求扩展字段类型，用于透传额外 body/query。
+# - openai.types.responses / shared 是官方 API 类型，例如 reasoning、include、context management。
+# - pydantic 和 pydantic_core 用于把这些配置字段校验并序列化成请求参数。
+
 from collections.abc import Mapping
 from dataclasses import fields, replace
 from typing import Annotated, Any, Literal, TypeAlias, cast

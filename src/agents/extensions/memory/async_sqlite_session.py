@@ -1,5 +1,10 @@
 from __future__ import annotations
 
+# 中文导入说明：
+# - aiosqlite 是 SQLite 的异步封装，让数据库读写不会阻塞 asyncio 事件循环。
+# - asynccontextmanager 用来写异步上下文管理器，保证连接使用后正确释放。
+# - pathlib.Path 让数据库文件路径处理更安全。
+
 import asyncio
 import json
 from collections.abc import AsyncIterator

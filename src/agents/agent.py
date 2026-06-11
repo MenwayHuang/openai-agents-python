@@ -8,6 +8,15 @@ from __future__ import annotations
 # 4. 如何把一个 Agent 包装成另一个 Agent 可调用的 FunctionTool。
 # 后续自研 agent-service 时，可以把这里当作“Agent 定义模型”的参考。
 
+# 中文导入说明：
+# - asyncio 是官方异步库，用于让 Agent 的工具、MCP、guardrail 支持 async/await。
+# - dataclasses/dataclass/field 用来快速定义轻量数据结构，减少手写 __init__。
+# - inspect 用来检查函数签名，例如判断工具函数是否需要 context。
+# - typing/collections.abc/typing_extensions 都是类型提示相关，帮助 IDE 和 mypy 理解复杂泛型。
+# - openai.types.responses.* 是 OpenAI 官方 SDK 的 Responses API 类型，只描述请求/响应结构。
+# - pydantic 用于数据校验和 JSON Schema 生成，Agent 的 output_type 和工具 schema 都会用到。
+# - `.xxx` 开头的是本项目内部模块，例如 tool、handoffs、guardrail、models。
+
 import asyncio
 import dataclasses
 import inspect

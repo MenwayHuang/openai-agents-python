@@ -14,6 +14,12 @@ import the package.
 
 from __future__ import annotations
 
+# 中文导入说明：
+# - pydantic.BaseModel/Field 用来描述 Blaxel sandbox 的配置参数并做校验。
+# - urllib.parse.urlsplit 是官方 URL 解析工具，用来拆分暴露端口或远程地址。
+# - Blaxel SDK 在函数内部懒加载，避免没安装 `openai-agents[blaxel]` 时导入整个包失败。
+# - deque 用于保存 PTY 输出片段，类似一个高效队列。
+
 import asyncio
 import io
 import json

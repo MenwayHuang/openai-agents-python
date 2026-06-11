@@ -5,6 +5,13 @@
 实现，后续如果 PPT Agent 需要安全执行代码或渲染任务，可以重点学习这种后端边界。
 """
 
+# 中文导入说明：
+# - docker 是 Docker 官方 Python SDK，用来创建容器、exec 命令、复制 tar、配置 volume。
+# - ThreadPoolExecutor/threading 用于把 Docker SDK 的阻塞操作放到线程里，避免阻塞 asyncio。
+# - tarfile/tempfile/io 用于在宿主机和容器之间打包、传输、解包 workspace 文件。
+# - socket/ip 相关逻辑用于处理暴露端口和本地服务地址。
+# - retry/iterator_io/tar_utils 是项目内部工具，分别处理短暂网络错误、迭代器转 IO、安全 tar 校验。
+
 import asyncio
 import errno
 import hashlib

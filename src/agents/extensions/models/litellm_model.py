@@ -3,6 +3,12 @@ from __future__ import annotations
 # 学习提示：LiteLLMModel 通过 litellm 调用多家模型，再适配回 Agents SDK 的统一模型接口。
 # 它和核心 OpenAI 模型层相比，更适合学习“兼容多 Provider 的代价和边界处理”。
 
+# 中文导入说明：
+# - litellm 是第三方多模型网关库，可以用统一接口调用不同厂商模型。
+# - openai.types.chat/responses 仍被用作统一数据结构，方便把 LiteLLM 结果转回 SDK 内部格式。
+# - pydantic.BaseModel 用于兼容 LiteLLM 返回的 Pydantic 响应对象。
+# - copy.copy 用于浅拷贝消息对象，避免转换过程中直接修改原始响应。
+
 import json
 import os
 import time

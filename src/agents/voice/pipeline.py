@@ -1,5 +1,10 @@
 from __future__ import annotations
 
+# 中文导入说明：
+# - asyncio 用于串联异步 STT、Agent workflow 和 TTS。
+# - VoicePipeline 本身不直接导入 OpenAI SDK，它通过 config.model_provider 获取 STT/TTS 模型。
+# - TraceCtxManager 来自 tracing，用来让语音 pipeline 的各阶段也能进入同一条 trace。
+
 import asyncio
 
 from ..exceptions import UserError

@@ -223,6 +223,7 @@ plugins:
                     - sessions/advanced_sqlite_session.md
                     - sessions/encrypted_session.md
                 - context.md
+                - Python 导入包说明: python-import-guide.md
                 - usage.md
                 - mcp.md
                 - tracing.md

@@ -14,6 +14,12 @@ import the package.
 
 from __future__ import annotations
 
+# 中文导入说明：
+# - runloop_api_client 是 Runloop 官方异步 SDK，这里只导入类型，实际 client 在后面创建。
+# - PurePosixPath/posixpath 用于处理远端 Linux workspace 路径，避免本机系统路径差异影响沙箱。
+# - base64 用于文件内容或归档数据的文本化传输。
+# - TYPE_CHECKING 下的导入只给类型检查器使用，降低运行时循环依赖风险。
+
 import asyncio
 import base64
 import io

@@ -1,5 +1,11 @@
 from __future__ import annotations
 
+# 中文导入说明：
+# - AsyncOpenAI 是 OpenAI 官方异步客户端，用于普通音频转写请求。
+# - websockets 来自 voice.imports，是可选依赖；用于流式 STT WebSocket。
+# - numpy 用于拼接和转换 PCM 音频数组；base64/json 用于构造实时音频事件 payload。
+# - asyncio.Queue 用来在 WebSocket 收发协程之间传递事件。
+
 import asyncio
 import base64
 import json

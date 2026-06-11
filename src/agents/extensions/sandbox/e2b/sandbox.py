@@ -17,6 +17,12 @@ import the package.
 
 from __future__ import annotations
 
+# 中文导入说明：
+# - E2B SDK 在运行时懒加载，没安装 `openai-agents[e2b]` 时不会影响普通导入。
+# - base64/binascii 用于处理 E2B 文件和归档中的二进制内容。
+# - inspect 用于兼容不同版本 E2B SDK 的函数签名。
+# - NoReturn 表示某些辅助函数只会抛异常，不会正常返回。
+
 import asyncio
 import base64
 import binascii

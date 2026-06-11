@@ -3,6 +3,12 @@ from __future__ import annotations
 # 学习提示：AnyLLMModel 通过 any-llm 库适配多个模型 Provider。
 # 它的价值在于学习“如何把外部库的响应转换成 Agents SDK 的 ModelResponse/stream event”。
 
+# 中文导入说明：
+# - importlib.import_module 用来按字符串动态导入 any_llm，这样没安装可选依赖时能给出清晰错误。
+# - any-llm-sdk 是第三方多模型适配库，当前要求 Python 3.11+。
+# - openai.types.chat/responses 继续作为内部统一结构，降低多 Provider 适配成本。
+# - pydantic.BaseModel 用于处理第三方库返回的结构化对象。
+
 import importlib
 import inspect
 import json

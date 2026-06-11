@@ -14,6 +14,12 @@ full type navigation.
 
 from __future__ import annotations
 
+# 中文导入说明：
+# - vercel.sandbox 是 Vercel 官方 sandbox SDK，提供远端 exec 和文件操作能力。
+# - httpx 用于识别/处理 Vercel SDK 底层可能抛出的 HTTP 异常。
+# - TypeAdapter/field_validator/field_serializer 来自 Pydantic，用于校验和序列化 Vercel options/state。
+# - tarfile 用于 workspace 归档，posixpath/PurePosixPath 用于远端 Linux 路径。
+
 import asyncio
 import io
 import json

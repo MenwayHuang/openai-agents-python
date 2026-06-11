@@ -30,6 +30,12 @@ Usage::
 
 from __future__ import annotations
 
+# 中文导入说明：
+# - base64/json 是官方库：base64 负责把二进制密文转成可存储字符串，json 负责包装加密 envelope。
+# - cryptography.fernet 是第三方加密工具，提供对称加密和完整性校验；InvalidToken 表示解密失败或密文被篡改。
+# - HKDF/hashes 用来从用户提供的 master key 派生出适合 Fernet 使用的密钥。
+# - TypedDict 用来描述加密后写入底层 session 的字典结构。
+
 import base64
 import json
 from typing import Any, Literal, TypeGuard, cast

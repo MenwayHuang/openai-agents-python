@@ -10,6 +10,12 @@
 
 from __future__ import annotations
 
+# 中文导入说明：
+# - openai.AsyncOpenAI / AsyncStream 来自官方 SDK，用于调用 Chat Completions 和读取流式结果。
+# - openai.types.chat.* 是旧 Chat Completions API 的类型，和 Responses API 的 item 类型不一样。
+# - 本文件导入 `chatcmpl_converter` 和 `chatcmpl_stream_handler`，说明这里的重点是格式转换和流处理。
+# - `omit` 仍然表示“不发送该参数”，不是发送 JSON null。
+
 import json
 import time
 from collections.abc import AsyncIterator

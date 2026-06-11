@@ -9,6 +9,13 @@ from __future__ import annotations
 # - run_internal/run_loop.py：单轮模型调用、工具执行和 next step 解析；
 # - RunState：中断/审批后恢复运行所需的状态快照。
 
+# 中文导入说明：
+# - asyncio/contextlib/warnings/cast 都来自 Python 官方库：分别处理异步任务、上下文管理、警告和类型转换。
+# - typing_extensions.Unpack 用于更精细地表达 `**kwargs` 类型。
+# - 本文件大量导入 `run_internal.*`，说明公开 Runner 很薄，真正的单轮执行、审批、session 持久化、
+#   工具追踪和错误处理被拆到了内部模块里。
+# - tracing、sandbox、memory、tool_guardrails 等内部导入代表一次 run 会串联观测、沙箱、记忆和工具安全。
+
 import asyncio
 import contextlib
 import warnings

@@ -16,6 +16,12 @@ we import Modal normally so IDEs can resolve and navigate Modal types.
 
 from __future__ import annotations
 
+# 中文导入说明：
+# - modal 是 Modal 官方 Python SDK，负责创建云端 sandbox、执行命令和处理文件。
+# - asynccontextmanager 用于把 Modal 资源包装成 `async with` 风格，保证退出时清理。
+# - functools 常用于包装/复用函数行为；这里配合异步资源管理和工具函数使用。
+# - ContainerProcess 是 Modal 中表示容器内进程的对象。
+
 import asyncio
 import functools
 import io

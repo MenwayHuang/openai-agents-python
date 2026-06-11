@@ -9,6 +9,13 @@
 
 from __future__ import annotations
 
+# 中文导入说明：
+# - anyio 是第三方异步兼容层，MCP SDK 用它统一处理异步流和任务。
+# - httpx 用于 MCP 的 SSE/Streamable HTTP 连接。
+# - mcp.* 来自 Model Context Protocol 官方 Python SDK，负责建立 client session、列工具、调用工具。
+# - exceptiongroup 是 Python 3.11 之前的兼容包，用来表示多个异步异常组成的异常组。
+# - contextlib.AsyncExitStack 用于集中管理多个异步连接资源，退出时按顺序清理。
+
 import abc
 import asyncio
 import inspect

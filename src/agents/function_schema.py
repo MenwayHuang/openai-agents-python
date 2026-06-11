@@ -10,6 +10,13 @@ from __future__ import annotations
 # 5. 再由 Pydantic 生成 JSON Schema，发给 LLM 作为工具参数契约。
 # 自研 agent-service 的工具系统也会需要类似能力：函数定义 -> 工具描述 -> 参数校验 -> 调用。
 
+# 中文导入说明：
+# - inspect 是官方反射库，可以读取函数参数、默认值、注解和签名。
+# - re 用于正则解析 docstring 或参数说明。
+# - griffe 是第三方文档解析库，专门读取 Python docstring 的结构化内容。
+# - pydantic.create_model 可以运行时动态创建模型，这正是“函数参数 -> JSON Schema”的关键。
+# - Field/FieldInfo 用于描述参数默认值、说明、约束等元信息。
+
 import contextlib
 import inspect
 import logging

@@ -10,6 +10,13 @@
 
 from __future__ import annotations
 
+# 中文导入说明：
+# - httpx 是第三方 HTTP 客户端，本文件主要用它处理底层网络 client 类型和请求行为。
+# - openai.AsyncOpenAI 是 OpenAI 官方异步客户端，真正的 responses.create 调用通过它发出。
+# - openai.types.responses.* 是 Responses API 的请求/响应/流事件类型，帮助代码明确每个字段的结构。
+# - contextvars.ContextVar 用于异步环境中保存“当前响应 ID”等上下文，不会在线程/任务之间乱串。
+# - typing_extensions.NotRequired 用于 TypedDict 里表示某些 key 可选。
+
 import asyncio
 import contextlib
 import inspect

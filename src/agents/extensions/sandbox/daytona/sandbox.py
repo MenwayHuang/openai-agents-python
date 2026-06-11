@@ -14,6 +14,12 @@ import the package.
 
 from __future__ import annotations
 
+# 中文导入说明：
+# - Daytona SDK 在具体方法里懒加载，保持可选依赖不影响基础包导入。
+# - pydantic.BaseModel/Field 用来表达 Daytona client options。
+# - urlsplit 用于解析 Daytona 返回的端口或工作区访问 URL。
+# - math/time 用于超时、等待和输出轮询控制。
+
 import asyncio
 import io
 import logging

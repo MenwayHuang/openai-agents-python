@@ -8,6 +8,11 @@
 
 from __future__ import annotations
 
+# 中文导入说明：
+# - collections.abc.Mapping/Sequence 是官方抽象类型，用来标注 dict/list 这类容器接口。
+# - TYPE_CHECKING 里的 openai Response 只给类型检查用，避免 tracing 基础模块运行时依赖模型类型。
+# - 本文件导入大量 SpanData，是为了给不同操作创建不同 span：模型生成、工具调用、handoff、MCP 等。
+
 from collections.abc import Mapping, Sequence
 from typing import TYPE_CHECKING, Any
 

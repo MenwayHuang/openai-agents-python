@@ -25,6 +25,12 @@ Usage::
 
 from __future__ import annotations
 
+# 中文导入说明：
+# - SQLAlchemy 是 Python 常用 ORM/数据库抽象库；这里使用 Core Table/Column 写法定义表结构。
+# - sqlalchemy.ext.asyncio 提供异步 Engine 和 async_sessionmaker，适合 async Web 服务。
+# - IntegrityError/OperationalError 是数据库常见异常，分别处理唯一键冲突和连接/锁等运行错误。
+# - threading.Lock 用于保护表初始化过程，避免并发创建表时重复执行。
+
 import asyncio
 import json
 import threading

@@ -1,5 +1,11 @@
 from __future__ import annotations
 
+# 中文导入说明：
+# - base64 用来把音频 bytes 编成字符串，便于通过 JSON 或 API 传输。
+# - io.BytesIO 是内存中的“文件对象”，不用落盘也能把音频交给上传接口。
+# - wave 是 Python 官方 WAV 文件读写库，用来把 numpy PCM buffer 包成 wav 格式。
+# - `.imports` 里的 np/npt 来自 numpy：np 是数组计算库，npt 是 numpy 的类型注解。
+
 import asyncio
 import base64
 import io

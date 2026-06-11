@@ -7,6 +7,12 @@
   工具看 `tool.py`，模型适配看 `models/`，MCP 看 `mcp/`。
 """
 
+# 中文导入说明：
+# - logging/sys/typing 是 Python 官方标准库：用于日志、解释器信息、类型提示。
+# - openai.AsyncOpenAI 来自 OpenAI 官方 Python SDK，是异步调用 OpenAI API 的客户端。
+# - 后面大量 `from .xxx import yyy` 是项目内部相对导入，把分散在各模块的公开类重新导出。
+#   新手读源码时不要被这里的导入数量吓到：它主要是“门面文件”，不是核心逻辑。
+
 import logging
 import sys
 from typing import TYPE_CHECKING, Any, Literal
