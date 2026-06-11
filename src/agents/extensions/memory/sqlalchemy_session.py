@@ -19,6 +19,8 @@ Usage::
     )
 
     await Runner.run(agent, "Hello", session=session)
+
+学习提示：SQLAlchemySession 是关系型数据库版 Session 后端，商业化系统接 Postgres 时更接近生产形态。
 """
 
 from __future__ import annotations

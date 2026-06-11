@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from typing import NoReturn
 
+# 学习提示：扩展依赖按 extra 安装；这个 helper 专门生成友好的“缺少可选依赖”错误。
+
 
 def raise_optional_dependency_error(
     export_name: str,

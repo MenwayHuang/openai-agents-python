@@ -8,8 +8,13 @@ from ..items import TResponseInputItem
 from .session import SessionABC
 from .session_settings import SessionSettings, resolve_session_limit
 
+# 学习提示：这个 Session 实现不是把历史存在本地，而是调用 OpenAI Conversations API
+# 在服务端维护会话历史。它对 PPT Agent 当前阶段不一定要用，但可以参考“Session 接口
+# 如何抽象不同存储后端”。
+
 
 async def start_openai_conversations_session(openai_client: AsyncOpenAI | None = None) -> str:
+    # AsyncOpenAI 是 openai-python 的异步客户端；不传时会走全局默认客户端或环境变量。
     _maybe_openai_client = openai_client
     if openai_client is None:
         _maybe_openai_client = get_default_openai_client() or AsyncOpenAI()
@@ -21,6 +26,8 @@ async def start_openai_conversations_session(openai_client: AsyncOpenAI | None =
 
 
 class OpenAIConversationsSession(SessionABC):
+    """基于 OpenAI Conversations API 的 Session 实现，负责远端历史读写。"""
+
     session_settings: SessionSettings | None = None
 
     def __init__(
@@ -63,6 +70,7 @@ class OpenAIConversationsSession(SessionABC):
         self._session_id = value
 
     async def _get_session_id(self) -> str:
+        # 懒初始化：第一次真正访问会话时才创建 conversation，避免无用远端资源。
         if self._session_id is None:
             self._session_id = await start_openai_conversations_session(self._openai_client)
         return self._session_id
@@ -71,6 +79,7 @@ class OpenAIConversationsSession(SessionABC):
         self._session_id = None
 
     async def get_items(self, limit: int | None = None) -> list[TResponseInputItem]:
+        # order="asc" 表示按时间从旧到新返回；限制条数时先倒序取最新，再 reverse 回正序。
         session_id = await self._get_session_id()
 
         session_limit = resolve_session_limit(limit, self.session_settings)
@@ -98,6 +107,7 @@ class OpenAIConversationsSession(SessionABC):
         return all_items  # type: ignore
 
     async def add_items(self, items: list[TResponseInputItem]) -> None:
+        # 这里直接把 Responses input item 写入远端 conversation。
         session_id = await self._get_session_id()
         if not items:
             return
@@ -108,6 +118,7 @@ class OpenAIConversationsSession(SessionABC):
         )
 
     async def pop_item(self) -> TResponseInputItem | None:
+        # SessionABC 要求支持撤回最后一条；远端实现通过 item_id 删除。
         session_id = await self._get_session_id()
         items = await self.get_items(limit=1)
         if not items:

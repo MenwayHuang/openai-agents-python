@@ -26,6 +26,10 @@ _ALL_SESSION_ITEMS_LIMIT = 2_147_483_647
 
 OpenAIResponsesCompactionMode = Literal["previous_response_id", "input", "auto"]
 
+# 学习提示：这个文件是“长会话压缩”的完整样板。它包装一个底层 Session，
+# 当历史增长到阈值后调用 OpenAI responses.compact，把多轮历史浓缩成可回放的短历史。
+# 对 PPT Agent 来说，可借鉴为“长期项目上下文摘要/压缩记忆”的设计。
+
 
 def select_compaction_candidate_items(
     items: list[TResponseInputItem],
@@ -36,6 +40,7 @@ def select_compaction_candidate_items(
     """
 
     def _is_user_message(item: TResponseInputItem) -> bool:
+        # 用户消息通常是任务需求本身，默认不作为压缩候选，避免丢失原始意图。
         if not isinstance(item, dict):
             return False
         if item.get("type") == "message":
@@ -63,6 +68,7 @@ def is_openai_model_name(model: str) -> bool:
         return False
 
     # Handle fine-tuned models: ft:gpt-4.1:org:proj:suffix
+    # 微调模型名前缀 ft: 后面仍然会带根模型名。
     without_ft_prefix = trimmed[3:] if trimmed.startswith("ft:") else trimmed
     root = without_ft_prefix.split(":", 1)[0]
 
@@ -147,6 +153,7 @@ class OpenAIResponsesCompactionSession(SessionABC, OpenAIResponsesCompactionAwar
         store: bool | None,
         requested_mode: OpenAIResponsesCompactionMode | None,
     ) -> _ResolvedCompactionMode:
+        # auto 模式会根据 response_id 和 store 参数决定用 previous_response_id 还是完整 input。
         mode = requested_mode or self.compaction_mode
         if (
             mode == "auto"
@@ -159,6 +166,7 @@ class OpenAIResponsesCompactionSession(SessionABC, OpenAIResponsesCompactionAwar
 
     async def run_compaction(self, args: OpenAIResponsesCompactionArgs | None = None) -> None:
         """Run compaction using responses.compact API."""
+        # 主入口：计算是否需要压缩 -> 调 OpenAI compact -> 用压缩结果替换底层 Session。
         if args and args.get("response_id"):
             self._response_id = args["response_id"]
         requested_mode = args.get("compaction_mode") if args else None
@@ -195,6 +203,7 @@ class OpenAIResponsesCompactionSession(SessionABC, OpenAIResponsesCompactionAwar
         )
 
         if not should_compact:
+            # decision hook 可以自定义，比如按 token 数、项目阶段、轮次等触发。
             logger.debug(
                 f"skip: decision hook declined compaction for {self._response_id} "
                 f"(mode={resolved_mode})"
@@ -208,8 +217,10 @@ class OpenAIResponsesCompactionSession(SessionABC, OpenAIResponsesCompactionAwar
 
         compact_kwargs: dict[str, Any] = {"model": self.model}
         if resolved_mode == "previous_response_id":
+            # previous_response_id 模式让 OpenAI 服务端根据已存 response 找历史上下文。
             compact_kwargs["previous_response_id"] = self._response_id
         else:
+            # input 模式显式把当前 session_items 作为压缩输入，适合未存储 response 的情况。
             compact_kwargs["input"] = session_items
 
         compacted = await self.client.responses.compact(**compact_kwargs)
@@ -245,6 +256,7 @@ class OpenAIResponsesCompactionSession(SessionABC, OpenAIResponsesCompactionAwar
         output_items: list[TResponseInputItem],
         previous_items: list[TResponseInputItem],
     ) -> None:
+        # 替换底层历史时先备份 previous_items；失败则尽量恢复，避免压缩失败导致记忆丢失。
         try:
             await self.underlying_session.clear_session()
         except Exception as clear_error:
@@ -306,6 +318,7 @@ class OpenAIResponsesCompactionSession(SessionABC, OpenAIResponsesCompactionAwar
         )
 
     async def _defer_compaction(self, response_id: str, store: bool | None = None) -> None:
+        # 某些流式/异步场景下不立刻 compact，而是记录 response_id，等合适时机再执行。
         if self._deferred_response_id is not None:
             return
         compaction_candidate_items, session_items = await self._ensure_compaction_candidates()
@@ -358,6 +371,7 @@ class OpenAIResponsesCompactionSession(SessionABC, OpenAIResponsesCompactionAwar
         self,
     ) -> tuple[list[TResponseInputItem], list[TResponseInputItem]]:
         """Lazy-load and cache compaction candidates."""
+        # 懒加载加缓存，避免每轮都从底层 Session 拉全量历史。
         if self._compaction_candidate_items is not None and self._session_items is not None:
             return (self._compaction_candidate_items[:], self._session_items[:])
 
@@ -387,6 +401,7 @@ def _strip_orphaned_assistant_ids(
     if not items:
         return items
 
+    # 如果压缩结果里没有 reasoning item，assistant message 上的旧 id 可能无法被 API 接受。
     has_reasoning = any(
         isinstance(item, dict) and item.get("type") == "reasoning" for item in items
     )
@@ -403,6 +418,7 @@ def _strip_orphaned_assistant_ids(
 
 def _normalize_compaction_output_items(items: list[Any]) -> list[TResponseInputItem]:
     """Normalize compacted output into replay-safe Responses input items."""
+    # responses.compact 返回的对象可能是 Pydantic model，也可能已经是 dict；统一转为输入格式。
     output_items: list[TResponseInputItem] = []
     for item in items:
         if isinstance(item, dict):
@@ -512,6 +528,7 @@ def _resolve_compaction_mode(
     response_id: str | None,
     store: bool | None,
 ) -> _ResolvedCompactionMode:
+    # store=False 表示服务端没有保存上一轮 response，此时不能靠 previous_response_id 找历史。
     if requested_mode != "auto":
         return requested_mode
     if store is False:

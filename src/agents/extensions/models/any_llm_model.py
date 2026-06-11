@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+# 学习提示：AnyLLMModel 通过 any-llm 库适配多个模型 Provider。
+# 它的价值在于学习“如何把外部库的响应转换成 Agents SDK 的 ModelResponse/stream event”。
+
 import importlib
 import inspect
 import json

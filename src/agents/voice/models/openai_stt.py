@@ -25,6 +25,9 @@ SESSION_UPDATE_TIMEOUT = 10  # Timeout waiting for session.updated event
 
 DEFAULT_TURN_DETECTION = {"type": "semantic_vad"}
 
+# 学习提示：OpenAI STT 这里同时支持单段音频转写和流式 WebSocket 转写。
+# numpy/base64 用于准备音频 payload，websockets 用于实时输入音频并接收转写事件。
+
 
 @dataclass
 class ErrorSentinel:
@@ -40,6 +43,7 @@ class WebsocketDoneSentinel:
 
 
 def _audio_to_base64(audio_data: list[npt.NDArray[np.int16 | np.float32]]) -> str:
+    # 多段 numpy 音频先拼接，再转换成 int16 PCM 并 base64 编码。
     concatenated_audio = np.concatenate(audio_data)
     if concatenated_audio.dtype == np.float32:
         # convert to int16
@@ -55,6 +59,7 @@ async def _wait_for_event(
     """
     Wait for an event from event_queue whose type is in expected_types within the specified timeout.
     """
+    # 用 asyncio.wait_for 给事件等待加超时，避免 WebSocket 没响应时无限挂住。
     start_time = time.time()
     while True:
         remaining = timeout - (time.time() - start_time)

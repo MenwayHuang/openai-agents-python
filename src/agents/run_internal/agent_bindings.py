@@ -6,6 +6,10 @@ from typing import Generic
 from ..agent import Agent
 from ..run_context import TContext
 
+# 学习提示：AgentBindings 同时保存 public_agent 和 execution_agent。
+# 普通运行二者相同；sandbox 等执行重写场景下，模型实际运行的是 execution_agent，
+# 但对用户回调/结果展示仍应暴露 public_agent。
+
 __all__ = [
     "AgentBindings",
     "bind_execution_agent",

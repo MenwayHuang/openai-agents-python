@@ -14,6 +14,9 @@ from .config import (
 from .model_events import RealtimeModelEvent
 from .model_inputs import RealtimeModelSendEvent
 
+# 学习提示：这个文件定义 Realtime 模型层抽象。Session 不直接依赖 OpenAI 具体实现，
+# 而是依赖 RealtimeModel 接口，所以理论上可以替换成其它实时模型 Provider。
+
 
 class RealtimePlaybackState(TypedDict):
     current_item_id: str | None
@@ -46,6 +49,7 @@ class RealtimePlaybackTracker:
             item_content_index: The index of the audio content in `item.content`
             bytes: The audio bytes that have been fully played.
         """
+        # 如果宿主播放的是原始字节，可以用这个方法自动换算成播放毫秒。
         ms = calculate_audio_length_ms(self._format, bytes)
         self.on_play_ms(item_id, item_content_index, ms)
 

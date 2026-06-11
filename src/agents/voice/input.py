@@ -12,6 +12,9 @@ from .imports import np, npt
 
 DEFAULT_SAMPLE_RATE = 24000
 
+# 学习提示：这个文件把音频输入统一成模型可消费的格式。
+# numpy 数组负责承载 PCM 数据，wave/io.BytesIO 用来生成内存中的 wav 文件。
+
 
 def _buffer_to_audio_file(
     buffer: npt.NDArray[np.int16 | np.float32 | np.float64],
@@ -19,6 +22,7 @@ def _buffer_to_audio_file(
     sample_width: int = 2,
     channels: int = 1,
 ) -> tuple[str, io.BytesIO, str]:
+    # float32 音频通常在 -1.0~1.0，发送前要裁剪并转换为 int16 PCM。
     if buffer.dtype == np.float32:
         # convert to int16
         buffer = np.clip(buffer, -1.0, 1.0)
@@ -79,6 +83,7 @@ class StreamedAudioInput:
     """
 
     def __init__(self):
+        # asyncio.Queue 用于生产者/消费者模型：外部不断 add_audio，pipeline 异步读取。
         self.queue: asyncio.Queue[npt.NDArray[np.int16 | np.float32] | None] = asyncio.Queue()
 
     async def add_audio(self, audio: npt.NDArray[np.int16 | np.float32] | None):

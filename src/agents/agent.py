@@ -1,5 +1,13 @@
 from __future__ import annotations
 
+# 中文学习注释：
+# 这个文件定义 Agent 的“配置层”。它本身不直接跑大模型主循环，而是描述：
+# 1. Agent 名字、系统提示词、模型配置；
+# 2. Agent 可以使用哪些工具（tools / MCP tools）；
+# 3. 输入/输出 guardrail、handoff、多 agent 协作方式；
+# 4. 如何把一个 Agent 包装成另一个 Agent 可调用的 FunctionTool。
+# 后续自研 agent-service 时，可以把这里当作“Agent 定义模型”的参考。
+
 import asyncio
 import dataclasses
 import inspect
@@ -58,6 +66,8 @@ from .util import _transforms
 from .util._types import MaybeAwaitable
 
 if TYPE_CHECKING:
+    # TYPE_CHECKING 只在静态类型检查时为 True，运行时不会导入这些对象。
+    # 这样可以避免循环导入，同时让 IDE/mypy 仍然知道类型信息。
     from openai.types.responses.response_function_tool_call import ResponseFunctionToolCall
 
     from .items import ToolApprovalItem
@@ -72,6 +82,8 @@ if TYPE_CHECKING:
 
 @dataclass
 class ToolsToFinalOutputResult:
+    # @dataclass 会自动生成 __init__、__repr__ 等方法。
+    # 这里用它表达“工具执行结果是否直接作为最终输出”的轻量数据结构。
     is_final_output: bool
     """Whether this is the final output. If False, the LLM will run again and receive the tool call
     output.
@@ -90,9 +102,13 @@ ToolsToFinalOutputFunction: TypeAlias = Callable[
 """A function that takes a run context and a list of tool results, and returns a
 `ToolsToFinalOutputResult`.
 """
+# TypeAlias 只是给复杂类型起一个名字，便于阅读。
+# 这里表示：你可以传一个函数，用工具结果决定是否结束本轮 Agent 执行。
 
 
 def _validate_codex_tool_name_collisions(tools: list[Tool]) -> None:
+    # Codex 工具名有额外约束：如果同名，会导致运行时无法稳定定位具体工具。
+    # 这里提前在 Agent 聚合工具时做校验，比等模型调用后再失败更容易排查。
     codex_tool_names = {
         tool.name
         for tool in tools
@@ -120,6 +136,8 @@ def _validate_codex_tool_name_collisions(tools: list[Tool]) -> None:
 
 class AgentToolStreamEvent(TypedDict):
     """Streaming event emitted when an agent is invoked as a tool."""
+    # TypedDict 用来描述“字典的结构”，运行时仍是普通 dict。
+    # 对基础 Python 来说，可以理解为给 dict 加上字段类型说明。
 
     event: StreamEvent
     """The streaming event from the nested agent run."""
@@ -132,12 +150,15 @@ class AgentToolStreamEvent(TypedDict):
 
 
 class StopAtTools(TypedDict):
+    # 这是 tool_use_behavior 的一种配置形式：指定调用哪些工具后直接停止。
     stop_at_tool_names: list[str]
     """A list of tool names, any of which will stop the agent from running further."""
 
 
 class MCPConfig(TypedDict):
     """Configuration for MCP servers."""
+    # MCPConfig 是 MCP 工具接入的配置字典。
+    # NotRequired 表示这个 key 可以不存在，不等同于值必须是 None。
 
     convert_schemas_to_strict: NotRequired[bool]
     """If True, we will attempt to convert the MCP schemas to strict-mode schemas. This is a
@@ -157,6 +178,8 @@ class MCPConfig(TypedDict):
 
 
 def _initial_model_settings_for_model(model: str | Model | None) -> ModelSettings:
+    # 根据 model 的形态决定默认模型参数。
+    # 传字符串时可以取该模型的默认 settings；传自定义 Model 实例时使用空配置。
     if model is None:
         return get_default_model_settings()
     if isinstance(model, str):
@@ -167,12 +190,16 @@ def _initial_model_settings_for_model(model: str | Model | None) -> ModelSetting
 def _model_settings_match_implicit_model_defaults(
     model: str | Model | None, model_settings: ModelSettings
 ) -> bool:
+    # 判断当前 settings 是否仍是“隐式默认值”。
+    # clone/切换模型时会用到：如果用户没显式改过参数，就随新模型更新默认参数。
     return model_settings == _initial_model_settings_for_model(model)
 
 
 @dataclass
 class AgentBase(Generic[TContext]):
     """Base class for `Agent` and `RealtimeAgent`."""
+    # Generic[TContext] 表示这个类携带一个上下文类型参数。
+    # 例如 Agent[MyContext] 会让工具函数、guardrail、hook 都知道 context 的类型。
 
     name: str
     """The name of the agent."""
@@ -184,6 +211,8 @@ class AgentBase(Generic[TContext]):
 
     tools: list[Tool] = field(default_factory=list)
     """A list of tools that the agent can use."""
+    # field(default_factory=list) 是 dataclass 里创建默认空列表的安全写法。
+    # 不要直接写 tools: list[Tool] = []，否则多个 Agent 实例会共享同一个列表。
 
     mcp_servers: list[MCPServer] = field(default_factory=list)
     """A list of [Model Context Protocol](https://modelcontextprotocol.io/) servers that
@@ -202,9 +231,13 @@ class AgentBase(Generic[TContext]):
     async def _get_mcp_tool_reserved_names(
         self, run_context: RunContextWrapper[TContext]
     ) -> set[str]:
+        # 当 MCP 工具需要带 server 前缀时，要提前知道哪些名字已被本地工具/handoff 占用。
+        # 这样 MCPUtil 在生成工具名时可以避让，减少名称冲突。
         reserved_tool_names = {tool.name for tool in self.tools if isinstance(tool, FunctionTool)}
 
         async def _check_handoff_enabled(handoff_obj: Handoff[Any, Any]) -> bool:
+            # is_enabled 可以是 bool，也可以是普通函数或 async 函数。
+            # inspect.isawaitable 用来兼容“返回值需要 await”的情况。
             attr = handoff_obj.is_enabled
             if isinstance(attr, bool):
                 return attr
@@ -223,6 +256,8 @@ class AgentBase(Generic[TContext]):
 
     async def get_mcp_tools(self, run_context: RunContextWrapper[TContext]) -> list[Tool]:
         """Fetches the available tools from the MCP servers."""
+        # MCP server 可以在 Agent 每次运行时动态暴露工具。
+        # 这个方法把外部 MCP 工具转换成本 SDK 内部统一的 Tool/FunctionTool 形态。
         convert_schemas_to_strict = self.mcp_config.get("convert_schemas_to_strict", False)
         failure_error_function = self.mcp_config.get(
             "failure_error_function", default_tool_error_function
@@ -245,9 +280,12 @@ class AgentBase(Generic[TContext]):
 
     async def get_all_tools(self, run_context: RunContextWrapper[TContext]) -> list[Tool]:
         """All agent tools, including MCP tools and function tools."""
+        # Agent 最终给模型看的工具列表 = MCP 工具 + 本地工具。
+        # 注意：工具可能是“动态启用”的，所以每次运行都要重新判断。
         mcp_tools = await self.get_mcp_tools(run_context)
 
         async def _check_tool_enabled(tool: Tool) -> bool:
+            # FunctionTool 支持 is_enabled 动态函数；Hosted tools 这类非 FunctionTool 默认可用。
             if not isinstance(tool, FunctionTool):
                 return True
 
@@ -259,6 +297,7 @@ class AgentBase(Generic[TContext]):
                 return bool(await res)
             return bool(res)
 
+        # asyncio.gather 并发判断多个工具是否启用，避免逐个 await 拖慢启动。
         results = await asyncio.gather(*(_check_tool_enabled(t) for t in self.tools))
         enabled: list[Tool] = [t for t, ok in zip(self.tools, results, strict=False) if ok]
         all_tools: list[Tool] = prune_orphaned_tool_search_tools([*mcp_tools, *enabled])
@@ -369,6 +408,8 @@ class Agent(AgentBase, Generic[TContext]):
     to True. This ensures that the agent doesn't enter an infinite loop of tool usage."""
 
     def __post_init__(self):
+        # dataclass 初始化完成后会自动调用 __post_init__。
+        # 这里集中做防御式类型校验，避免错误配置一路传到模型调用阶段才爆。
         from typing import get_origin
 
         if not isinstance(self.name, str):
@@ -431,6 +472,7 @@ class Agent(AgentBase, Generic[TContext]):
             )
 
         if self.model is not None and self.model_settings == get_default_model_settings():
+            # 如果用户只指定了 model，没有显式指定 model_settings，就换成该模型对应默认值。
             self.model_settings = _initial_model_settings_for_model(self.model)
 
         if not isinstance(self.input_guardrails, list):
@@ -497,6 +539,8 @@ class Agent(AgentBase, Generic[TContext]):
             new_agent = agent.clone(instructions="New instructions")
             ```
         """
+        # dataclasses.replace 会基于当前 dataclass 创建一个新实例，只替换传入字段。
+        # 这是配置对象常见写法：不修改原 Agent，而是 clone 一个变体。
         if (
             "model" in kwargs
             and "model_settings" not in kwargs
@@ -559,6 +603,8 @@ class Agent(AgentBase, Generic[TContext]):
         """
 
         def _is_supported_parameters(value: Any) -> bool:
+            # Agent-as-tool 的结构化入参目前只支持 dataclass 或 Pydantic Model。
+            # 这样后面可以稳定生成 JSON Schema，并把模型输出反序列化成 Python 对象。
             if not isinstance(value, type):
                 return False
             if dataclasses.is_dataclass(value):
@@ -574,6 +620,7 @@ class Agent(AgentBase, Generic[TContext]):
         )
 
         if parameters is None:
+            # 默认工具入参形态：让模型提供“传给子 Agent 的输入”。
             params_adapter = TypeAdapter(AgentAsToolInput)
             params_schema = ensure_strict_json_schema(params_adapter.json_schema())
         else:
@@ -589,6 +636,7 @@ class Agent(AgentBase, Generic[TContext]):
 
         def _normalize_tool_input(parsed: Any, tool_name: str) -> Any:
             # Prefer JSON mode so structured params (datetime/UUID/Decimal, etc.) serialize cleanly.
+            # TypeAdapter.dump_python(mode="json") 会把 datetime、UUID、Decimal 等转成 JSON 友好值。
             try:
                 return params_adapter.dump_python(parsed, mode="json")
             except Exception as exc:
@@ -597,6 +645,8 @@ class Agent(AgentBase, Generic[TContext]):
                 ) from exc
 
         async def _run_agent_impl(context: ToolContext, input_json: str) -> Any:
+            # 这是 Agent-as-tool 真正执行的核心：
+            # 父 Agent 调用工具 -> 这里解析工具 JSON 参数 -> 启动子 Agent Runner -> 返回子 Agent 输出。
             from .run import DEFAULT_MAX_TURNS, Runner
             from .tool_context import ToolContext
 
@@ -610,6 +660,7 @@ class Agent(AgentBase, Generic[TContext]):
             _log_function_tool_invocation(tool_name=tool_name, input_json=input_json)
 
             try:
+                # Pydantic 在这里校验模型传来的 JSON 是否符合工具参数 schema。
                 parsed_params = params_adapter.validate_python(json_data)
             except ValidationError as exc:
                 raise ModelBehaviorError(f"Invalid JSON input for tool {tool_name}: {exc}") from exc
@@ -630,6 +681,8 @@ class Agent(AgentBase, Generic[TContext]):
             tool_state_scope_id = get_agent_tool_state_scope(context)
             if isinstance(context, ToolContext):
                 # Use a fresh ToolContext to avoid sharing approval state with parent runs.
+                # 子 Agent 作为工具运行时，不能直接复用父工具上下文中的审批状态。
+                # 所以这里构造一个新的 ToolContext，同时复用必要的 usage/run_config 等信息。
                 nested_context = ToolContext(
                     context=context.context,
                     usage=context.usage,
@@ -665,6 +718,8 @@ class Agent(AgentBase, Generic[TContext]):
             def _nested_approvals_status(
                 interruptions: list[ToolApprovalItem],
             ) -> Literal["approved", "pending", "rejected"]:
+                # 子 Agent 也可能因为工具审批而中断。
+                # 这里把子 Agent 的 pending approval 映射回父上下文，判断当前能否恢复执行。
                 has_pending = False
                 has_decision = False
                 for interruption in interruptions:
@@ -696,6 +751,8 @@ class Agent(AgentBase, Generic[TContext]):
                 parent_context: RunContextWrapper[Any],
                 interruptions: list[ToolApprovalItem],
             ) -> None:
+                # 父级审批通过/拒绝后，需要同步到子 Agent 的 RunContext，
+                # 否则恢复 nested run 时子 Agent 不知道审批结果。
                 def _find_mirrored_approval_record(
                     interruption: ToolApprovalItem,
                     *,
@@ -758,6 +815,8 @@ class Agent(AgentBase, Generic[TContext]):
                         )
 
             if isinstance(context, ToolContext) and context.tool_call is not None:
+                # 如果这个 agent-tool 上一次因为审批中断过，这里尝试读取之前保存的 run_result。
+                # approved/rejected 后会把它恢复成 RunState 继续跑。
                 pending_run_result = peek_agent_tool_run_result(
                     context.tool_call,
                     scope_id=tool_state_scope_id,
@@ -783,6 +842,7 @@ class Agent(AgentBase, Generic[TContext]):
 
             if run_result is None:
                 if on_stream is not None:
+                    # on_stream 存在时，子 Agent 以流式方式运行，并把事件转发给外层回调。
                     stream_handler = on_stream
                     run_result_streaming = Runner.run_streamed(
                         starting_agent=cast(Agent[Any], self),
@@ -799,6 +859,7 @@ class Agent(AgentBase, Generic[TContext]):
                     )
                     # Dispatch callbacks in the background so slow handlers do not block
                     # event consumption.
+                    # 用队列把“读取流事件”和“用户回调处理”解耦，避免回调太慢阻塞模型流。
                     event_queue: asyncio.Queue[AgentToolStreamEvent | None] = asyncio.Queue()
 
                     async def _run_handler(payload: AgentToolStreamEvent) -> None:
@@ -860,6 +921,7 @@ class Agent(AgentBase, Generic[TContext]):
                             await dispatch_task
                     run_result = run_result_streaming
                 else:
+                    # 非流式路径：直接等待子 Agent 完整运行结束。
                     run_result = await Runner.run(
                         starting_agent=cast(Agent[Any], self),
                         input=resume_state or resolved_input,
@@ -886,6 +948,7 @@ class Agent(AgentBase, Generic[TContext]):
                     )
 
             if custom_output_extractor:
+                # 允许调用方自定义如何从子 Agent 的 RunResult 中取工具返回值。
                 return await custom_output_extractor(run_result)
 
             if run_result.final_output is not None and (
@@ -936,6 +999,8 @@ class Agent(AgentBase, Generic[TContext]):
         return run_agent_tool
 
     async def get_system_prompt(self, run_context: RunContextWrapper[TContext]) -> str | None:
+        # instructions 可以是固定字符串，也可以是动态函数。
+        # 动态函数会在每次运行时拿到 run_context 和 agent，自行生成系统提示词。
         if isinstance(self.instructions, str):
             return self.instructions
         elif callable(self.instructions):

@@ -1,5 +1,14 @@
 from __future__ import annotations
 
+# 中文学习注释：
+# 这个文件负责“一轮模型响应之后”的决策：
+# - process_model_response：把 ModelResponse 分类成 ProcessedResponse；
+# - execute_tools_and_side_effects：执行本地工具、审批、handoff 等副作用；
+# - check_for_final_output_from_tools：判断工具结果是否直接作为最终输出；
+# - resolve_interrupted_turn：用户审批后，从中断点继续执行；
+# - get_single_step_result_from_response：把上面这些串成 SingleStepResult。
+# 对自研 PPT agent 来说，这里是最值得学习的 runtime 状态机。
+
 import asyncio
 import inspect
 from collections.abc import Awaitable, Callable, Mapping, Sequence
@@ -181,6 +190,8 @@ async def _maybe_finalize_from_tool_results(
     tool_input_guardrail_results: list[ToolInputGuardrailResult],
     tool_output_guardrail_results: list[ToolOutputGuardrailResult],
 ) -> SingleStepResult | None:
+    # 有些 Agent 配置为“工具结果就是最终结果”。
+    # 这个 helper 根据 agent.tool_use_behavior 判断是否可以跳过再次调用 LLM。
     check_tool_use = await check_for_final_output_from_tools(
         public_agent, function_results, context_wrapper
     )
@@ -221,6 +232,8 @@ async def _resolve_tool_not_found_message(
     tool_name: str,
     call_id: str,
 ) -> str:
+    # 模型可能调用不存在的工具。这里允许用户用 tool_error_formatter 自定义反馈文本。
+    # 反馈会作为 tool output 交回模型，让模型有机会修正。
     default_message = _default_tool_not_found_message(tool_name)
     formatter = run_config.tool_error_formatter
     if formatter is None:
@@ -287,6 +300,8 @@ async def run_final_output_hooks(
     context_wrapper: RunContextWrapper[TContext],
     final_output: Any,
 ) -> None:
+    # Agent 结束时触发 run-level 和 agent-level 的 on_agent_end/on_end。
+    # Hook 支持异步并发执行。
     agent_hook_context = AgentHookContext(
         context=context_wrapper.context,
         usage=context_wrapper.usage,
@@ -320,6 +335,7 @@ async def execute_final_output_step(
     | None = None,
 ) -> SingleStepResult:
     """Finalize a turn once final output is known and run end hooks."""
+    # 只要最终输出已经确定，就会走这里统一生成 NextStepFinalOutput。
     final_output_hooks = run_final_output_hooks_fn or run_final_output_hooks
     await final_output_hooks(public_agent, hooks, context_wrapper, final_output)
 
@@ -378,6 +394,8 @@ def _resolve_server_managed_handoff_behavior(
     input_filter: HandoffInputFilter | None,
     should_nest_history: bool,
 ) -> tuple[HandoffInputFilter | None, bool]:
+    # OpenAI server-managed conversation 模式下，服务端掌握历史。
+    # 本地 handoff input_filter/nest_handoff_history 无法安全重写完整历史，所以这里限制/降级。
     if not server_manages_conversation:
         return input_filter, should_nest_history
 
@@ -417,6 +435,8 @@ async def execute_handoffs(
     tool_output_guardrail_results: list[ToolOutputGuardrailResult] | None = None,
 ) -> SingleStepResult:
     """Execute a handoff and prepare the next turn for the new agent."""
+    # handoff 在模型侧表现为一次工具调用，但 runtime 执行效果是“切换当前 Agent”。
+    # 如果模型一次请求多个 handoff，只执行第一个，其余返回工具输出说明被忽略。
 
     def nest_history(data: HandoffInputData, mapper: Any | None = None) -> HandoffInputData:
         if nest_handoff_history_fn is None:
@@ -439,6 +459,7 @@ async def execute_handoffs(
 
     actual_handoff = run_handoffs[0]
     with handoff_span(from_agent=public_agent.name) as span_handoff:
+        # handoff_span 单独记录从哪个 agent 转给哪个 agent。
         handoff = actual_handoff.handoff
         new_agent: Agent[Any] = await handoff.on_invoke_handoff(
             context_wrapper, actual_handoff.tool_call.arguments
@@ -487,6 +508,8 @@ async def execute_handoffs(
         input_filter = handoff.input_filter or (
             run_config.handoff_input_filter if run_config else None
         )
+        # input_filter 可以改写交给新 Agent 的历史；
+        # nest_handoff_history 则把旧 agent 的上下文包装成嵌套历史，避免新 Agent 误解角色。
         handoff_nest_setting = handoff.nest_handoff_history
         should_nest_history = (
             handoff_nest_setting
@@ -597,6 +620,11 @@ async def check_for_final_output_from_tools(
     context_wrapper: RunContextWrapper[TContext],
 ) -> ToolsToFinalOutputResult:
     """Determine if tool results should produce a final output."""
+    # tool_use_behavior 的四种路径：
+    # - run_llm_again：工具结果回给模型，继续跑；
+    # - stop_on_first_tool：第一个工具结果就是最终输出；
+    # - StopAtTools dict：指定工具命中后停止；
+    # - callable：用户自定义判断。
     if not tool_results:
         return NOT_FINAL_OUTPUT
 
@@ -641,6 +669,8 @@ async def execute_tools_and_side_effects(
     server_manages_conversation: bool = False,
 ) -> SingleStepResult:
     """Run one turn of the loop, coordinating tools, approvals, guardrails, and handoffs."""
+    # 这是模型响应后的核心执行器。
+    # 它不会再调用模型，而是根据 ProcessedResponse 执行本地副作用，然后给出 NextStep。
     public_agent = bindings.public_agent
 
     execute_final_output_call = execute_final_output
@@ -650,6 +680,7 @@ async def execute_tools_and_side_effects(
     approval_items_by_call_id = index_approval_items_by_call_id(pre_step_items)
 
     plan = _build_plan_for_fresh_turn(
+        # ToolExecutionPlan 会把“需要执行的工具”和“等待审批的工具”拆开。
         processed_response=processed_response,
         agent=public_agent,
         context_wrapper=context_wrapper,
@@ -657,6 +688,7 @@ async def execute_tools_and_side_effects(
     )
 
     new_step_items = _dedupe_tool_call_items(
+        # 恢复或重试时可能已有 tool_call item，这里避免重复写入。
         existing_items=pre_step_items,
         new_items=processed_response.new_items,
     )
@@ -671,6 +703,8 @@ async def execute_tools_and_side_effects(
         apply_patch_results,
         local_shell_results,
     ) = await _execute_tool_plan(
+        # 真正执行函数工具、shell、computer、apply_patch 等。
+        # 内部可能并发执行不同类别工具。
         plan=plan,
         bindings=bindings,
         hooks=hooks,
@@ -697,6 +731,7 @@ async def execute_tools_and_side_effects(
     )
 
     interruptions = _collect_tool_interruptions(
+        # 工具执行结果里可能包含 ToolApprovalItem，表示需要外部审批后才能继续。
         function_results=function_results,
         custom_tool_results=custom_tool_results,
         shell_results=shell_results,
@@ -711,6 +746,7 @@ async def execute_tools_and_side_effects(
     processed_response.interruptions = interruptions
 
     if interruptions:
+        # 只要存在 interruption，就暂停本轮，把 processed_response 放入结果，供 RunState 恢复使用。
         return SingleStepResult(
             original_input=original_input,
             model_response=new_response,
@@ -730,6 +766,8 @@ async def execute_tools_and_side_effects(
     )
 
     if run_handoffs := processed_response.handoffs:
+        # handoff 优先级高于“工具结果是否为最终输出”。
+        # 发生 handoff 后，下一轮由新 Agent 处理。
         return await execute_handoffs_call(
             public_agent=public_agent,
             original_input=original_input,
@@ -746,6 +784,7 @@ async def execute_tools_and_side_effects(
         )
 
     tool_final_output = await _maybe_finalize_from_tool_results(
+        # 工具执行完后，按 tool_use_behavior 判断是否直接结束。
         public_agent=public_agent,
         original_input=original_input,
         new_response=new_response,
@@ -767,6 +806,7 @@ async def execute_tools_and_side_effects(
     )
 
     if not processed_response.has_tools_or_approvals_to_run():
+        # 没有本地工具/审批需要执行时，普通 message 就可能是最终输出。
         has_tool_activity_without_message = not message_items and bool(
             processed_response.tools_used
         )
@@ -807,6 +847,7 @@ async def execute_tools_and_side_effects(
                     tool_output_guardrail_results=tool_output_guardrail_results,
                 )
             if output_schema and not output_schema.is_plain_text() and potential_final_output_text:
+                # 结构化输出 Agent：把模型文本按 output_schema 校验成最终对象。
                 final_output = output_schema.validate_json(potential_final_output_text)
                 return await execute_final_output_call(
                     public_agent=public_agent,
@@ -835,6 +876,7 @@ async def execute_tools_and_side_effects(
                 )
 
     return SingleStepResult(
+        # 默认路径：本轮做了工具/hosted tool 等活动，但还没有最终输出，继续下一轮。
         original_input=original_input,
         model_response=new_response,
         pre_step_items=pre_step_items,
@@ -860,6 +902,9 @@ async def resolve_interrupted_turn(
     nest_handoff_history_fn: Callable[..., HandoffInputData] | None = None,
 ) -> SingleStepResult:
     """Continue a turn that was previously interrupted waiting for tool approval."""
+    # 这个函数处理“人工审批后继续”。
+    # 它不会重新解析新的模型响应，而是基于上次保存的 processed_response，
+    # 跳过已经有输出的工具，只执行审批通过且尚未执行的工具。
     public_agent = bindings.public_agent
     execution_agent = bindings.execution_agent
 
@@ -871,6 +916,8 @@ async def resolve_interrupted_turn(
         return nest_handoff_history_fn(data, mapper)
 
     def _pending_approvals_from_state() -> list[ToolApprovalItem]:
+        # 优先从 RunState._current_step 读取中断项；
+        # 兼容路径下也可以从 original_pre_step_items 里扫描 ToolApprovalItem。
         if (
             run_state is not None
             and hasattr(run_state, "_current_step")
@@ -888,6 +935,7 @@ async def resolve_interrupted_turn(
         tool_call: ResponseFunctionToolCall,
         function_tool: FunctionTool,
     ) -> None:
+        # 审批拒绝时，要生成 function_call_output，告诉模型该工具被拒绝。
         if isinstance(call_id, str) and call_id in rejected_function_call_ids:
             return
         rejection_message = REJECTION_MESSAGE
@@ -1102,6 +1150,8 @@ async def resolve_interrupted_turn(
         return "pending" if has_pending else "approved"
 
     def _function_output_exists(run: ToolRunFunction) -> bool:
+        # 恢复时要避免重复执行已经产出 output 的工具。
+        # Agent-as-tool 还要额外检查 nested interruptions 是否已经解决。
         call_id = extract_tool_call_id(run.tool_call)
         if not call_id:
             return False
@@ -1166,6 +1216,8 @@ async def resolve_interrupted_turn(
         ]
 
     async def _rebuild_function_runs_from_approvals() -> list[ToolRunFunction]:
+        # 有些恢复状态里只有 approval item，没有完整 ToolRunFunction。
+        # 这里用当前可用工具表把 approval item 重建成可执行的 ToolRunFunction。
         if not pending_approval_items:
             return []
         tool_map = build_function_tool_lookup_map(approval_rebuild_function_tools)
@@ -1277,6 +1329,7 @@ async def resolve_interrupted_turn(
         return rebuilt_runs
 
     function_tool_runs = await _select_function_tool_runs_for_resume(
+        # 恢复时只挑选“需要执行且审批已通过/无需审批”的函数工具。
         processed_response.functions,
         approval_items_by_call_id=approval_items_by_call_id,
         context_wrapper=context_wrapper,
@@ -1315,6 +1368,7 @@ async def resolve_interrupted_turn(
 
     pending_computer_actions: list[ToolRunComputerAction] = []
     for action in processed_response.computer_actions:
+        # computer/shell/apply_patch/custom 都要检查是否已经存在输出，避免恢复时重复执行副作用。
         call_id = _computer_call_id_from_run(action)
         if _computer_output_exists(call_id):
             continue
@@ -1360,6 +1414,7 @@ async def resolve_interrupted_turn(
     )
 
     plan = _build_plan_for_resume_turn(
+        # 恢复场景的 plan 和 fresh turn 不同：它只包含未完成/已审批的工具运行。
         processed_response=processed_response,
         agent=public_agent,
         context_wrapper=context_wrapper,
@@ -1399,6 +1454,7 @@ async def resolve_interrupted_turn(
         _add_pending_interruption(interruption)
 
     new_items, append_if_new = _make_unique_item_appender(original_pre_step_items)
+    # append_if_new 用对象身份去重，避免把恢复前已经存在的 RunItem 再追加一遍。
 
     for item in _build_tool_result_items(
         function_results=function_results,
@@ -1425,6 +1481,7 @@ async def resolve_interrupted_turn(
 
     processed_response.interruptions = pending_interruptions
     if pending_interruptions:
+        # 如果恢复后仍有 pending approval，继续返回中断状态。
         return SingleStepResult(
             original_input=original_input,
             model_response=new_response,
@@ -1449,6 +1506,7 @@ async def resolve_interrupted_turn(
         pending_hosted_mcp_approvals,
         pending_hosted_mcp_approval_ids,
     ) = process_hosted_mcp_approvals(
+        # Hosted MCP 审批和本地工具审批略不同：需要保留 provider 返回的 request id 关联。
         original_pre_step_items=original_pre_step_items,
         mcp_approval_requests=processed_response.mcp_approval_requests,
         context_wrapper=context_wrapper,
@@ -1499,6 +1557,7 @@ async def resolve_interrupted_turn(
                 executed_handoff_call_ids.add(handoff_call_id)
 
     pending_handoffs = [
+        # handoff 也可能在恢复前已经执行过；这里只保留还没执行的 handoff。
         handoff
         for handoff in processed_response.handoffs
         if not handoff.tool_call.call_id
@@ -1558,6 +1617,12 @@ def process_model_response(
     existing_items: Sequence[RunItem] | None = None,
     run_config: RunConfig | None = None,
 ) -> ProcessedResponse:
+    # 把模型输出的原始 output item 逐个分类：
+    # message -> MessageOutputItem
+    # function_call -> ToolRunFunction
+    # handoff tool call -> ToolRunHandoff
+    # shell/computer/apply_patch/custom/MCP -> 对应 ToolRun*
+    # 分类后的 ProcessedResponse 再交给 execute_tools_and_side_effects。
     items: list[RunItem] = []
 
     run_handoffs = []
@@ -1574,6 +1639,7 @@ def process_model_response(
     function_map = build_function_tool_lookup_map(
         [tool for tool in all_tools if isinstance(tool, FunctionTool)]
     )
+    # function_map 使用 lookup key，而不是简单 name，原因是 namespace/deferred tool 可能同名。
     custom_tool_map = {tool.name: tool for tool in all_tools if isinstance(tool, CustomTool)}
     computer_tool = next((tool for tool in all_tools if isinstance(tool, ComputerTool)), None)
     local_shell_tool = next((tool for tool in all_tools if isinstance(tool, LocalShellTool)), None)
@@ -1586,6 +1652,7 @@ def process_model_response(
     }
     hosted_mcp_tool_metadata = collect_mcp_list_tools_metadata(existing_items or ())
     hosted_mcp_tool_metadata.update(collect_mcp_list_tools_metadata(response.output))
+    # Hosted MCP 的 list_tools 结果里有工具 title/description，后续 ToolCallItem 会带上这些展示信息。
 
     def _dump_output_item(raw_item: Any) -> dict[str, Any]:
         if isinstance(raw_item, dict):
@@ -1601,6 +1668,8 @@ def process_model_response(
         }
 
     for output in response.output:
+        # OpenAI Responses API 的 output item 类型很多。
+        # 这里按类型转成 SDK 内部统一 RunItem，并把需要本地执行的工具加入待执行列表。
         output_type = get_mapping_or_attr(output, "type")
         logger.debug(
             "Processing output item type=%s class=%s",
@@ -1608,6 +1677,8 @@ def process_model_response(
             output.__class__.__name__ if hasattr(output, "__class__") else type(output),
         )
         if output_type == "shell_call":
+            # 新版 shell_call 可以是托管容器，也可以是本地 executor。
+            # 只有 local environment 且有 executor 时，本地 runtime 才执行。
             if isinstance(output, dict):
                 shell_call_raw = dict(output)
             elif hasattr(output, "model_dump"):
@@ -1677,6 +1748,7 @@ def process_model_response(
             )
             continue
         if output_type == "apply_patch_call":
+            # apply_patch_call 是让模型请求文件补丁；这里先转成 ToolCallItem 和待执行 ToolRun。
             if isinstance(output, dict):
                 apply_patch_call_raw = dict(output)
             elif hasattr(output, "model_dump"):
@@ -1728,6 +1800,7 @@ def process_model_response(
             )
             continue
         if output_type == "tool_search_call":
+            # 标准 runner 不自动执行 client tool_search；client 模式需要调用方自己处理。
             tool_search_call_raw = coerce_tool_search_call_raw_item(output)
             if get_mapping_or_attr(tool_search_call_raw, "execution") == "client":
                 raise ModelBehaviorError(
@@ -1748,6 +1821,7 @@ def process_model_response(
             tools_used.append("tool_search")
             continue
         if isinstance(output, ResponseOutputMessage):
+            # 普通 assistant message，可能最终成为 final output。
             items.append(MessageOutputItem(raw_item=output, agent=agent))
         elif isinstance(output, ResponseFileSearchToolCall):
             items.append(ToolCallItem(raw_item=output, agent=agent))
@@ -1758,6 +1832,7 @@ def process_model_response(
         elif isinstance(output, ResponseReasoningItem):
             items.append(ReasoningItem(raw_item=output, agent=agent))
         elif isinstance(output, ResponseComputerToolCall):
+            # computer tool 本地需要执行动作并回传截图。
             items.append(ToolCallItem(raw_item=output, agent=agent))
             if not computer_tool:
                 tools_used.append("computer")
@@ -1773,6 +1848,7 @@ def process_model_response(
                 ToolRunComputerAction(tool_call=output, computer_tool=computer_tool)
             )
         elif isinstance(output, McpApprovalRequest):
+            # Hosted MCP 工具可能要求审批；有 callback 就自动处理，否则暴露 interruption 给调用方。
             items.append(MCPApprovalRequestItem(raw_item=output, agent=agent))
             if output.server_label not in hosted_mcp_server_map:
                 _error_tracing.attach_error_to_current_span(
@@ -1798,6 +1874,7 @@ def process_model_response(
         elif isinstance(output, McpListTools):
             items.append(MCPListToolsItem(raw_item=output, agent=agent))
         elif isinstance(output, McpCall):
+            # Hosted MCP call 已由模型服务端执行；本地只记录调用项和展示元数据。
             metadata = hosted_mcp_tool_metadata.get((output.server_label, output.name))
             items.append(
                 ToolCallItem(
@@ -1819,6 +1896,7 @@ def process_model_response(
             items.append(ToolCallItem(raw_item=output, agent=agent))
             tools_used.append("code_interpreter")
         elif isinstance(output, LocalShellCall):
+            # 兼容旧 local_shell_call，也允许映射到新版 ShellTool。
             items.append(ToolCallItem(raw_item=output, agent=agent))
             if local_shell_tool:
                 tools_used.append("local_shell")
@@ -1840,6 +1918,7 @@ def process_model_response(
                     "Model produced local shell call without a local shell tool."
                 )
         elif isinstance(output, ResponseCustomToolCall):
+            # CustomTool 原始输入是一段字符串；apply_patch 兼容路径也可能走 custom tool call。
             custom_tool = custom_tool_map.get(output.name)
             if custom_tool is not None:
                 items.append(ToolCallItem(raw_item=cast(Any, output), agent=agent))
@@ -1886,6 +1965,7 @@ def process_model_response(
             and is_apply_patch_name(output.name, apply_patch_tool)
             and get_function_tool_lookup_key_for_call(output) not in function_map
         ):
+            # 兼容把 apply_patch 伪装成 function_call 的模型输出。
             parsed_operation = parse_apply_patch_function_args(output.arguments)
             pseudo_call = {
                 "type": "apply_patch_call",
@@ -1922,6 +2002,7 @@ def process_model_response(
         qualified_output_name = get_tool_call_qualified_name(output)
 
         if qualified_output_name == output.name and output.name in handoff_map:
+            # handoff 本质上也是 function_call，但如果名字命中 handoff_map，就转成 ToolRunHandoff。
             items.append(HandoffCallItem(raw_item=output, agent=agent))
             handoff = ToolRunHandoff(
                 tool_call=output,
@@ -1932,6 +2013,7 @@ def process_model_response(
             lookup_key = get_function_tool_lookup_key_for_call(output)
             func_tool = function_map.get(lookup_key) if lookup_key is not None else None
             if func_tool is None:
+                # 工具不存在时，可以选择直接报错，也可以返回 tool output 让模型自我修正。
                 if output_schema is not None and output.name == "json_tool_call":
                     synthetic_tool = build_litellm_json_tool_call(output)
                     items.append(
@@ -1979,6 +2061,7 @@ def process_model_response(
                 )
             )
             functions.append(
+                # 真正待执行的 FunctionTool 会进入 processed_response.functions。
                 ToolRunFunction(
                     tool_call=output,
                     function_tool=func_tool,
@@ -2019,6 +2102,11 @@ async def get_single_step_result_from_response(
     event_queue: asyncio.Queue[StreamEvent | QueueCompleteSentinel] | None = None,
     before_side_effects: Callable[[], Awaitable[None]] | None = None,
 ) -> SingleStepResult:
+    # 单轮收口函数：
+    # 1. process_model_response 分类模型输出；
+    # 2. 可选 before_side_effects，流式场景用来在工具执行前检查 guardrail；
+    # 3. 记录工具使用；
+    # 4. 执行工具/交接/最终输出判断，返回 SingleStepResult。
     item_agent = bindings.public_agent
     processed_response = process_model_response(
         agent=item_agent,
@@ -2031,6 +2119,7 @@ async def get_single_step_result_from_response(
     )
 
     if before_side_effects is not None:
+        # 关键安全点：side effects 之前最后检查一次 input guardrail。
         await before_side_effects()
 
     tool_use_tracker.record_processed_response(item_agent, processed_response)

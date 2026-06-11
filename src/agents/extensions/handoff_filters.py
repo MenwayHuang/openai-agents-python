@@ -2,6 +2,11 @@
 
 from __future__ import annotations
 
+# 中文学习注释：
+# 这个扩展文件提供常用 handoff input_filter。
+# 当前核心函数 remove_all_tools 会在转交给下一个 Agent 时移除工具调用/工具输出/reasoning 等，
+# 适合希望新 Agent 只看到用户和助手自然语言上下文的场景。
+
 from ..handoffs import (
     HandoffInputData,
     default_handoff_history_mapper,
@@ -32,6 +37,8 @@ __all__ = [
 
 def remove_all_tools(handoff_input_data: HandoffInputData) -> HandoffInputData:
     """Filters out all tool items: file search, web search and function calls+output."""
+    # 注意：这里同时过滤 input_history、pre_handoff_items、new_items、input_items。
+    # 这样和 nest_handoff_history 链式组合时，不会把工具项又引回模型输入。
 
     history = handoff_input_data.input_history
     new_items = handoff_input_data.new_items
@@ -57,6 +64,7 @@ def remove_all_tools(handoff_input_data: HandoffInputData) -> HandoffInputData:
 
 
 def _remove_tools_from_items(items: tuple[RunItem, ...]) -> tuple[RunItem, ...]:
+    # RunItem 层面的过滤：移除各种 Tool/Handoff/MCP/Reasoning 内部项。
     filtered_items = []
     for item in items:
         if (
@@ -80,6 +88,7 @@ def _remove_tools_from_items(items: tuple[RunItem, ...]) -> tuple[RunItem, ...]:
 def _remove_tool_types_from_input(
     items: tuple[TResponseInputItem, ...],
 ) -> tuple[TResponseInputItem, ...]:
+    # 原始 input item 层面的过滤：根据 type 字段移除工具相关项。
     tool_types = [
         "function_call",
         "function_call_output",

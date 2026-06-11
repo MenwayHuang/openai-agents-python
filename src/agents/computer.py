@@ -4,6 +4,10 @@ from typing import Literal
 Environment = Literal["mac", "windows", "ubuntu", "browser"]
 Button = Literal["left", "right", "wheel", "back", "forward"]
 
+# 学习提示：Computer/AsyncComputer 是“电脑操作工具”的抽象接口。
+# 它不实现真实点击/截图，只定义宿主环境必须提供哪些能力；真正实现可以是浏览器、
+# 远程桌面、Playwright、macOS 自动化等。
+
 
 class Computer(abc.ABC):
     """A computer implemented with sync operations.
@@ -26,6 +30,7 @@ class Computer(abc.ABC):
     @abc.abstractmethod
     def screenshot(self) -> str:
         """Return a base64-encoded PNG screenshot of the current display."""
+        # abc.abstractmethod 表示子类必须实现；返回 base64 PNG 方便直接传给多模态模型。
         pass
 
     @abc.abstractmethod
@@ -90,6 +95,7 @@ class AsyncComputer(abc.ABC):
     @abc.abstractmethod
     async def screenshot(self) -> str:
         """Return a base64-encoded PNG screenshot of the current display."""
+        # async 版本适合远程浏览器/网络控制这类 I/O 操作，避免阻塞事件循环。
         pass
 
     @abc.abstractmethod

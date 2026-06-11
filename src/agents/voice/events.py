@@ -5,6 +5,9 @@ from typing import Literal, TypeAlias
 
 from .imports import np, npt
 
+# 学习提示：VoicePipeline 对外流出的事件类型。音频、生命周期、错误分开建模，
+# 调用方可以按事件类型播放音频、更新 UI 或显示异常。
+
 
 @dataclass
 class VoiceStreamEventAudio:

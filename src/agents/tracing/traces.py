@@ -1,3 +1,11 @@
+"""Trace 生命周期和可恢复 trace 状态。
+
+中文学习说明：
+- Trace 是一次完整工作流，Span 是 Trace 下的步骤。
+- `TraceState` 让 RunState 可以保存 trace 元数据，恢复运行时继续挂到同一条 trace。
+- 这里特别注意 API key：默认只保存 hash 指纹，避免把 tracing key 明文写进状态快照。
+"""
+
 from __future__ import annotations
 
 import abc
@@ -46,6 +54,7 @@ class Trace(abc.ABC):
         - Use context managers for reliable cleanup
         - Consider privacy when adding trace data
     """
+    # Trace 本身不保存所有 span 列表；span start/end 由 processor 接收并导出。
 
     @abc.abstractmethod
     def __enter__(self) -> Trace:
@@ -154,6 +163,7 @@ class Trace(abc.ABC):
 def _hash_tracing_api_key(tracing_api_key: str | None) -> str | None:
     # Persist only a fingerprint so resumed runs can verify the same explicit
     # tracing key without storing the secret.
+    # 生产系统要学习这个做法：状态快照默认不持久化密钥，只保存可验证指纹。
     if tracing_api_key is None:
         return None
     return hashlib.sha256(tracing_api_key.encode("utf-8")).hexdigest()
@@ -162,6 +172,7 @@ def _hash_tracing_api_key(tracing_api_key: str | None) -> str | None:
 @dataclass
 class TraceState:
     """Serializable trace metadata for run state persistence."""
+    # TraceState 是 RunState 的一部分，用于“恢复时重新挂回原 trace”。
 
     trace_id: str | None = None
     workflow_name: str | None = None
@@ -174,6 +185,7 @@ class TraceState:
 
     @classmethod
     def from_trace(cls, trace: Trace | None) -> TraceState | None:
+        # 从运行中的 Trace 抽取可持久化元数据。
         if trace is None:
             return None
         payload = trace.to_json(include_tracing_api_key=True)
@@ -210,6 +222,7 @@ class TraceState:
         )
 
     def to_json(self, *, include_tracing_api_key: bool = False) -> dict[str, Any] | None:
+        # 默认不输出 tracing_api_key，只有显式 include 时才输出明文。
         if (
             self.trace_id is None
             and self.workflow_name is None
@@ -250,6 +263,8 @@ _started_trace_ids_lock = threading.Lock()
 
 
 def _mark_trace_id_started(trace_id: str | None) -> None:
+    # 记录当前进程已经 start 过哪些 trace，用于恢复时判断能否 reattach。
+    # OrderedDict 同时承担简单 LRU，避免集合无限增长。
     if not trace_id or trace_id == "no-op":
         return
     with _started_trace_ids_lock:
@@ -271,6 +286,7 @@ def _trace_id_was_started(trace_id: str | None) -> bool:
 
 class ReattachedTrace(Trace):
     """A trace context rebuilt from persisted state without re-emitting trace start events."""
+    # 恢复运行时不应该重复发送 trace start 事件，所以用 ReattachedTrace 只恢复上下文。
 
     __slots__ = (
         "_name",
@@ -353,6 +369,7 @@ class ReattachedTrace(Trace):
 
 def reattach_trace(trace_state: TraceState, *, tracing_api_key: str | None = None) -> Trace | None:
     """Build a live trace context from persisted state without notifying processors."""
+    # 用持久化 trace_state 重建当前上下文，避免断点续跑的 span 散落到新 trace。
     if trace_state.trace_id is None:
         return None
     return ReattachedTrace(
@@ -382,6 +399,7 @@ class NoOpTrace(Trace):
             await Runner.run(agent, "query")
         ```
     """
+    # 关闭 tracing 时返回 NoOpTrace，业务代码仍然可以统一使用 with trace(...)。
 
     def __init__(self):
         self._started = False
@@ -448,6 +466,7 @@ class TraceImpl(Trace):
     """
     A trace that will be recorded by the tracing library.
     """
+    # 真正会记录的 Trace 实现。它在 start/end 时通知 TracingProcessor。
 
     __slots__ = (
         "_name",
@@ -491,6 +510,7 @@ class TraceImpl(Trace):
         return self._tracing_api_key
 
     def start(self, mark_as_current: bool = False):
+        # start 后，后续创建的 span 会默认挂到这个 current trace 下。
         if self._started:
             return
 
@@ -502,6 +522,7 @@ class TraceImpl(Trace):
             self._prev_context_token = Scope.set_current_trace(self)
 
     def finish(self, reset_current: bool = False):
+        # finish 通知 processor 收尾，并在需要时恢复进入 trace 前的上下文。
         if not self._started:
             return
 

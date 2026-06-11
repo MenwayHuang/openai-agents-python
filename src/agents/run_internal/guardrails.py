@@ -1,5 +1,13 @@
 from __future__ import annotations
 
+# 中文学习注释：
+# 这个文件是 guardrail 的运行时执行器。
+# guardrail.py 定义数据结构和装饰器；这里负责：
+# - 创建 guardrail span；
+# - 并发运行多个 guardrail；
+# - tripwire 触发时取消其他 guardrail；
+# - 流式模式下把 guardrail 结果写入队列。
+
 import asyncio
 from typing import Any
 
@@ -33,6 +41,7 @@ async def run_single_input_guardrail(
     input: str | list[TResponseInputItem],
     context: RunContextWrapper[TContext],
 ) -> InputGuardrailResult:
+    # 单个 input guardrail 执行，并把 triggered 状态写入 trace span。
     with guardrail_span(guardrail.get_name()) as span_guardrail:
         result = await guardrail.run(agent, input, context)
         span_guardrail.span_data.triggered = result.output.tripwire_triggered
@@ -45,6 +54,7 @@ async def run_single_output_guardrail(
     agent_output: Any,
     context: RunContextWrapper[TContext],
 ) -> OutputGuardrailResult:
+    # 单个 output guardrail 执行，检查最终输出。
     with guardrail_span(guardrail.get_name()) as span_guardrail:
         result = await guardrail.run(agent=agent, agent_output=agent_output, context=context)
         span_guardrail.span_data.triggered = result.output.tripwire_triggered
@@ -60,18 +70,23 @@ async def run_input_guardrails_with_queue(
     parent_span: Span[Any] | None,
 ) -> None:
     """Run guardrails concurrently and stream results into the queue."""
+    # 流式模式专用：guardrail 和模型流可能并发。
+    # 每个 guardrail 完成后放入 queue；如果 tripwire 触发，取消剩余 guardrail。
     queue = streamed_result._input_guardrail_queue
 
     guardrail_tasks = [
+        # create_task 启动并发 guardrail。
         asyncio.create_task(run_single_input_guardrail(agent, guardrail, input, context))
         for guardrail in guardrails
     ]
     guardrail_results = []
     try:
         for done in asyncio.as_completed(guardrail_tasks):
+            # as_completed 谁先完成就先处理谁，有利于快速响应 tripwire。
             result = await done
             guardrail_results.append(result)
             if result.output.tripwire_triggered:
+                # 一旦任意 guardrail 触发，记录结果并取消其他未完成检查。
                 streamed_result.input_guardrail_results = (
                     streamed_result.input_guardrail_results + guardrail_results
                 )
@@ -114,6 +129,7 @@ async def run_input_guardrails(
     context: RunContextWrapper[TContext],
 ) -> list[InputGuardrailResult]:
     """Run input guardrails concurrently and raise on tripwires."""
+    # 非流式路径：并发执行所有 input guardrail，任何一个触发就抛 InputGuardrailTripwireTriggered。
     if not guardrails:
         return []
 
@@ -125,6 +141,7 @@ async def run_input_guardrails(
     guardrail_results: list[InputGuardrailResult] = []
 
     for done in asyncio.as_completed(guardrail_tasks):
+        # guardrail 顺序不保证和列表一致，按完成先后处理。
         result = await done
         if result.output.tripwire_triggered:
             for t in guardrail_tasks:
@@ -149,6 +166,8 @@ async def run_output_guardrails(
     context: RunContextWrapper[TContext],
 ) -> list[OutputGuardrailResult]:
     """Run output guardrails in parallel and raise on tripwires."""
+    # 输出 guardrail 只在最终输出产生后运行。
+    # 任意 tripwire 都会抛 OutputGuardrailTripwireTriggered。
     if not guardrails:
         return []
 
@@ -181,6 +200,7 @@ async def input_guardrail_tripwire_triggered_for_stream(
     streamed_result: RunResultStreaming,
 ) -> bool:
     """Return True if any input guardrail triggered during a streamed run."""
+    # 流式收尾/持久化前检查后台 guardrail task 是否触发过。
     task = streamed_result._input_guardrails_task
     if task is None:
         return False

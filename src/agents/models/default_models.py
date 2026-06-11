@@ -1,3 +1,11 @@
+"""默认模型和默认模型参数。
+
+中文学习说明：
+- SDK 通过 `OPENAI_DEFAULT_MODEL` 环境变量决定默认模型，否则使用内置默认值。
+- 不同 GPT-5 系列模型对 reasoning.effort 支持不同，所以这里按模型名匹配默认 ModelSettings。
+- 对 PPT Agent 来说，不建议完全依赖默认模型；关键 agent 应显式声明模型和参数。
+"""
+
 import copy
 import os
 import re
@@ -96,6 +104,7 @@ def get_default_model() -> str:
     """
     Returns the default model name.
     """
+    # 环境变量优先，便于本地/部署环境切换默认模型。
     return os.getenv(OPENAI_DEFAULT_MODEL_ENV_VARIABLE_NAME, "gpt-5.4-mini").lower()
 
 

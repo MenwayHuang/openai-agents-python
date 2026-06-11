@@ -1,3 +1,12 @@
+"""Runner 级别的运行配置。
+
+中文学习说明：
+- `Agent` 定义单个 agent 的能力，`RunConfig` 定义一次 run 的全局策略。
+- 这里可以覆盖模型、模型参数、trace、session、handoff 历史、guardrail、工具错误格式化、
+  sandbox 和工具执行并发。
+- 对 PPT Agent 来说，可以把“某次生成任务的全局配置”集中放在类似 RunConfig 的结构里。
+"""
+
 from __future__ import annotations
 
 import os
@@ -40,6 +49,7 @@ DEFAULT_MAX_ARCHIVE_MEMBERS = 100_000
 
 def _default_trace_include_sensitive_data() -> bool:
     """Return the default for trace_include_sensitive_data based on environment."""
+    # 通过环境变量控制 trace 是否包含敏感输入输出。生产环境建议默认 false 或做脱敏。
     val = os.getenv("OPENAI_AGENTS_TRACE_INCLUDE_SENSITIVE_DATA", "true")
     return val.strip().lower() in ("1", "true", "yes", "on")
 
@@ -55,6 +65,7 @@ class ModelInputData:
 @dataclass
 class CallModelData(Generic[TContext]):
     """Data passed to `RunConfig.call_model_input_filter` prior to model call."""
+    # call_model_input_filter 拿到这个对象后，可以在真正请求模型前修改 input/instructions。
 
     model_data: ModelInputData
     agent: Agent[TContext]
@@ -104,6 +115,7 @@ class ToolExecutionConfig:
     """
 
     def __post_init__(self) -> None:
+        # dataclass 初始化后自动执行 __post_init__，常用于参数校验。
         if self.max_function_tool_concurrency is not None and (
             self.max_function_tool_concurrency < 1
         ):
@@ -203,6 +215,8 @@ class SandboxRunConfig:
 @dataclass
 class RunConfig:
     """Configures settings for the entire agent run."""
+    # RunConfig 是 Runner.run 的“全局覆盖层”。如果 Agent 自己有 model_settings，
+    # 这里非 None 的字段会覆盖 agent 级配置。
 
     model: str | Model | None = None
     """The model to use for the entire agent run. If set, will override the model set on every
@@ -286,9 +300,12 @@ class RunConfig:
     - `SessionInputCallback`: A custom function that receives the history and new input, and
       returns the desired combined list of items.
     """
+    # 你可以在这里做“只保留最近 N 条历史”“总结旧历史”“注入项目上下文”等逻辑。
 
     call_model_input_filter: CallModelInputFilter | None = None
     """
+    # 这个过滤器比 session_input_callback 更靠近模型调用点，
+    # 适合做最终 token 裁剪、敏感信息脱敏、临时系统提示注入。
     Optional callback that is invoked immediately before calling the model. It receives the current
     agent, context and the model input (instructions and input items), and must return a possibly
     modified `ModelInputData` to use for the model call.
@@ -332,6 +349,7 @@ class RunConfig:
 
 class RunOptions(TypedDict, Generic[TContext]):
     """Arguments for ``AgentRunner`` methods."""
+    # TypedDict 让 Runner.run 的可选参数有明确类型，同时仍保持 dict/kwargs 风格。
 
     context: NotRequired[TContext | None]
     """The context for the run."""

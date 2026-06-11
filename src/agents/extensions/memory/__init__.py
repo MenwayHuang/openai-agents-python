@@ -4,6 +4,9 @@ This package contains optional, production-grade session implementations that
 introduce extra third-party dependencies (database drivers, ORMs, etc.). They
 conform to the [`Session`][agents.memory.session.Session] protocol so they can be
 used as a drop-in replacement for [`SQLiteSession`][agents.memory.sqlite_session.SQLiteSession].
+
+学习提示：这些是可选生产级 session 后端，如 Redis、MongoDB、SQLAlchemy、Dapr 和加密包装。
+当前 PPT Agent 可先用 SQLite/JSON，后续商业化多用户再看这些后端。
 """
 
 from __future__ import annotations

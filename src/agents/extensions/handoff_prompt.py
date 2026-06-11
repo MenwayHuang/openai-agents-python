@@ -1,3 +1,7 @@
+# 中文学习注释：
+# 这个文件只是提供 handoff 场景的推荐 prompt 前缀。
+# 它不参与 runtime 逻辑，作用是告诉模型“你属于多 Agent 系统，handoff 是后台行为，不要对用户强调转交过程”。
+
 # A recommended prompt prefix for agents that use handoffs. We recommend including this or
 # similar instructions in any agents that use handoffs.
 RECOMMENDED_PROMPT_PREFIX = (
@@ -16,4 +20,5 @@ def prompt_with_handoff_instructions(prompt: str) -> str:
     """
     Add recommended instructions to the prompt for agents that use handoffs.
     """
+    # 简单字符串拼接，把推荐前缀加到用户自己的 prompt 前面。
     return f"{RECOMMENDED_PROMPT_PREFIX}\n\n{prompt}"

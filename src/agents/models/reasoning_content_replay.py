@@ -4,6 +4,9 @@ from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from typing import Any
 
+# 学习提示：某些模型会在消息里带 reasoning content。跨模型复用这些推理内容有风险，
+# 所以这里提供一个“是否允许回放 reasoning 内容”的可配置判断点。
+
 
 @dataclass
 class ReasoningContentSource:
@@ -39,6 +42,7 @@ ShouldReplayReasoningContent = Callable[[ReasoningContentReplayContext], bool]
 def default_should_replay_reasoning_content(context: ReasoningContentReplayContext) -> bool:
     """Return whether the SDK should replay reasoning content by default."""
 
+    # 当前默认只对 DeepSeek 做特殊兼容，避免把 A 模型的隐藏推理内容塞给 B 模型。
     if "deepseek" not in context.model.lower():
         return False
 

@@ -1,4 +1,5 @@
 try:
+    # voice 是可选依赖：numpy 处理音频数组，websockets 用于流式 STT/TTS 连接。
     import numpy as np
     import numpy.typing as npt
     import websockets

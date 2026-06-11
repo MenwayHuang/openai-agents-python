@@ -1,6 +1,9 @@
-"""
-Item utilities for the run pipeline. Hosts input normalization helpers and lightweight builders
-for synthetic run items or IDs used during tool execution. Internal use only.
+"""Run pipeline 内部的 item 转换工具。
+
+中文学习说明：
+- 这里负责 RunItem -> Responses input item、输入规范化、去重、孤儿工具调用清理。
+- 它和 `agents/items.py` 的区别是：`items.py` 定义数据结构，本文件负责运行时转换和清洗。
+- 对 PPT Agent 来说，这类工具函数对应“任务事件如何变成下一轮模型上下文”的底层清洗层。
 """
 
 from __future__ import annotations
@@ -68,6 +71,7 @@ def run_item_to_input_item(
     reasoning_item_id_policy: ReasoningItemIdPolicy | None = None,
 ) -> TResponseInputItem | None:
     """Convert a run item to model input, optionally stripping reasoning IDs."""
+    # ToolApprovalItem 是“等待人工审批”的占位，不应该回放给模型。
     if run_item.type == "tool_approval_item":
         return None
     to_input = getattr(run_item, "to_input_item", None)
@@ -107,6 +111,8 @@ def drop_orphan_function_calls(
     by their associated model-emitted item (``Item 'rs_...' of type 'reasoning' was provided
     without its required following item``).
     """
+    # 如果历史里有 function_call 但没有对应 output，下一轮发给 Responses API 会报错。
+    # 重试/恢复/裁剪历史时经常会产生这种孤儿调用，所以要提前清理。
 
     completed_call_ids = _completed_call_ids_by_type(items)
     matched_anonymous_tool_search_calls = _matched_anonymous_tool_search_call_indexes(items)

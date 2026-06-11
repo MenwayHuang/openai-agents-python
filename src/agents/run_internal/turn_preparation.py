@@ -1,5 +1,14 @@
 from __future__ import annotations
 
+# 中文学习注释：
+# 这个文件负责“一轮模型调用前”的准备工作：
+# - 校验 hooks；
+# - 可选过滤模型输入；
+# - 解析 enabled handoffs/tools；
+# - 解析 output schema；
+# - 解析最终要用的 model 和 model_settings。
+# 它不执行模型，也不执行工具，只做 turn 前置准备。
+
 import asyncio
 import inspect
 from typing import Any
@@ -34,6 +43,8 @@ def validate_run_hooks(
     hooks: RunHooksBase[Any, Agent[Any]] | AgentHooksBase[Any, Agent[Any]] | Any | None,
 ) -> RunHooks[Any]:
     """Normalize hooks input and enforce RunHooks type."""
+    # RunHooks 是一次 run 级别的生命周期回调；
+    # AgentHooks 是单个 Agent 级别的回调。这里防止用户把两种 hook 传错位置。
     if hooks is None:
         return RunHooks[Any]()
     input_hook_type = type(hooks).__name__
@@ -57,6 +68,8 @@ async def maybe_filter_model_input(
     system_instructions: str | None,
 ) -> ModelInputData:
     """Apply optional call_model_input_filter to modify model input."""
+    # call_model_input_filter 是运行配置中的“最后一道输入拦截器”。
+    # 常见用途：裁剪超长历史、脱敏、按 agent 类型改写 system instructions。
     effective_instructions = system_instructions
     effective_input: list[TResponseInputItem] = input_items
 
@@ -74,6 +87,7 @@ async def maybe_filter_model_input(
             context=context_wrapper.context,
         )
         maybe_updated = run_config.call_model_input_filter(filter_payload)
+        # 过滤器既可以是同步函数，也可以是 async 函数。
         updated = await maybe_updated if inspect.isawaitable(maybe_updated) else maybe_updated
         if not isinstance(updated, ModelInputData):
             raise UserError("call_model_input_filter must return a ModelInputData instance")
@@ -87,6 +101,8 @@ async def maybe_filter_model_input(
 
 async def get_handoffs(agent: Agent[Any], context_wrapper: RunContextWrapper[Any]) -> list[Handoff]:
     """Return enabled handoffs for the agent."""
+    # agent.handoffs 里既可以直接放 Handoff，也可以放 Agent。
+    # 放 Agent 时会用 handoff(agent) 包装成模型可调用的 handoff tool。
     handoffs = []
     for handoff_item in agent.handoffs:
         if isinstance(handoff_item, Handoff):
@@ -95,6 +111,7 @@ async def get_handoffs(agent: Agent[Any], context_wrapper: RunContextWrapper[Any
             handoffs.append(handoff(handoff_item))
 
     async def check_handoff_enabled(handoff_obj: Handoff) -> bool:
+        # handoff 和 tool 一样支持动态 is_enabled。
         attr = handoff_obj.is_enabled
         if isinstance(attr, bool):
             return attr
@@ -115,6 +132,8 @@ async def get_all_tools(agent: Agent[Any], context_wrapper: RunContextWrapper[An
 
 def get_output_schema(agent: Agent[Any]) -> AgentOutputSchemaBase | None:
     """Return the resolved output schema for the agent, if any."""
+    # output_type 为 None/str 时，模型输出就是普通文本；
+    # 否则会包装成 AgentOutputSchema，用 JSON Schema 约束和校验最终输出。
     if agent.output_type is None or agent.output_type is str:
         return None
     elif isinstance(agent.output_type, AgentOutputSchemaBase):
@@ -125,6 +144,8 @@ def get_output_schema(agent: Agent[Any]) -> AgentOutputSchemaBase | None:
 
 def get_model(agent: Agent[Any], run_config: RunConfig) -> Model:
     """Resolve the model instance for this run."""
+    # 模型优先级：RunConfig.model 覆盖 Agent.model。
+    # 字符串模型名会交给 model_provider 解析成具体 Model 实例。
     if isinstance(run_config.model, Model):
         return run_config.model
     elif isinstance(run_config.model, str):
@@ -153,6 +174,8 @@ def _model_settings_for_resolved_name(agent: Agent[Any], run_config: RunConfig) 
 
 def get_model_settings(agent: Agent[Any], run_config: RunConfig) -> ModelSettings:
     """Resolve model settings, keeping implicit defaults aligned with the resolved model name."""
+    # model_settings 也要处理“隐式默认值”：
+    # 如果用户没显式改 Agent.model_settings，就根据最终模型名取更合适的默认参数。
     model_settings = agent.model_settings
     if model_settings == _implicit_model_settings_for_agent(agent):
         model_settings = _model_settings_for_resolved_name(agent, run_config)

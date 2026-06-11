@@ -18,6 +18,9 @@ from .processor_interface import TracingExporter, TracingProcessor
 from .spans import Span
 from .traces import Trace
 
+# 学习提示：这里是 trace 导出的默认实现，包括控制台导出和后台批量上报 OpenAI tracing API。
+# 关注点是队列、批量、重试、字段截断和敏感数据控制。
+
 
 class ConsoleSpanExporter(TracingExporter):
     """Prints the traces and spans to the console."""

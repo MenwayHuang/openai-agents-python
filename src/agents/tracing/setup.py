@@ -12,6 +12,9 @@ GLOBAL_TRACE_PROVIDER: TraceProvider | None = None
 _GLOBAL_TRACE_PROVIDER_LOCK = threading.Lock()
 _SHUTDOWN_HANDLER_REGISTERED = False
 
+# 学习提示：setup.py 管理全局 TraceProvider，并用 atexit 在进程退出时 flush/shutdown。
+# 懒初始化可以避免 import SDK 时就创建线程或网络客户端。
+
 
 def _shutdown_global_trace_provider() -> None:
     provider = GLOBAL_TRACE_PROVIDER

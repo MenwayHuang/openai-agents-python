@@ -5,6 +5,12 @@ These types are not part of the public SDK surface.
 
 from __future__ import annotations
 
+# 中文学习注释：
+# 这个文件定义 run loop 内部使用的“步骤协议”。
+# 模型返回的是一堆 output items；SDK 会先把它们整理成 ProcessedResponse，
+# 再根据执行结果产出 NextStep：最终输出、handoff、继续跑一轮、或等待审批中断。
+# 自研 Agent runtime 时，可以把这里看成“状态机的数据结构定义”。
+
 import dataclasses
 from dataclasses import dataclass
 from typing import Any
@@ -51,39 +57,47 @@ __all__ = [
 
 class QueueCompleteSentinel:
     """Sentinel used to signal completion when streaming run loop results."""
+    # Sentinel 是“特殊标记对象”。流式队列里放入它，表示没有更多事件。
 
 
 QUEUE_COMPLETE_SENTINEL = QueueCompleteSentinel()
 
 NOT_FINAL_OUTPUT = ToolsToFinalOutputResult(is_final_output=False, final_output=None)
+# 工具结果默认不直接作为最终输出，除非 Agent.tool_use_behavior 显式指定。
 
 
 @dataclass
 class ToolRunHandoff:
+    # 表示模型调用了某个 handoff 工具，等待 runtime 执行“切换 Agent”。
     handoff: Handoff
     tool_call: ResponseFunctionToolCall
 
 
 @dataclass
 class ToolRunFunction:
+    # 表示模型调用了 FunctionTool，等待 runtime 执行 Python 函数。
     tool_call: ResponseFunctionToolCall
     function_tool: FunctionTool
 
 
 @dataclass
 class ToolRunFunctionNotFound:
+    # 模型调用了一个不存在/不可用的函数工具。
+    # runtime 会生成 tool output 告诉模型“工具不存在”，而不是直接崩溃。
     tool_call: ResponseFunctionToolCall
     tool_name: str
 
 
 @dataclass
 class ToolRunComputerAction:
+    # 表示模型请求 computer tool 动作，例如点击、输入、截图。
     tool_call: ResponseComputerToolCall
     computer_tool: ComputerTool[Any]
 
 
 @dataclass
 class ToolRunCustom:
+    # CustomTool 使用原始字符串输入，不走 FunctionTool 的 JSON 参数 schema。
     tool_call: Any
     custom_tool: CustomTool
 
@@ -114,6 +128,9 @@ class ToolRunApplyPatchCall:
 
 @dataclass
 class ProcessedResponse:
+    # ProcessedResponse 是模型响应的分类结果。
+    # 它把同一个 ModelResponse 中的 message、tool call、handoff、approval request 等拆成不同桶，
+    # 后续 turn_resolution/tool_planning 会按这些桶执行对应动作。
     new_items: list[RunItem]
     handoffs: list[ToolRunHandoff]
     functions: list[ToolRunFunction]
@@ -132,6 +149,7 @@ class ProcessedResponse:
     def has_tools_or_approvals_to_run(self) -> bool:
         # Handoffs, functions and computer actions need local processing
         # Hosted tools have already run, so there's nothing to do.
+        # Hosted tools 是模型服务端已经执行过的工具；本地只需要处理本地函数/电脑/shell/handoff/审批。
         return any(
             [
                 self.handoffs,
@@ -153,22 +171,26 @@ class ProcessedResponse:
 
 @dataclass
 class NextStepHandoff:
+    # 下一步切换到 new_agent 继续 run loop。
     new_agent: Agent[Any]
 
 
 @dataclass
 class NextStepFinalOutput:
+    # 下一步结束整个 run，并把 output 作为最终输出。
     output: Any
 
 
 @dataclass
 class NextStepRunAgain:
+    # 下一步继续调用模型，通常是因为刚执行完工具，需要把工具结果发回模型。
     pass
 
 
 @dataclass
 class NextStepInterruption:
     """Represents an interruption in the agent run due to tool approval requests."""
+    # 下一步暂停，等待外部用户 approve/reject 工具调用。
 
     interruptions: list[ToolApprovalItem]
     """The list of tool calls awaiting approval."""
@@ -176,6 +198,8 @@ class NextStepInterruption:
 
 @dataclass
 class SingleStepResult:
+    # SingleStepResult 是“一轮 turn”的完整结果：
+    # 包含本轮模型响应、这轮新增 RunItem、下一步状态、guardrail 结果、恢复所需 processed_response。
     original_input: str | list[TResponseInputItem]
     """The input items i.e. the items before run() was called. May be mutated by handoff input
     filters."""
@@ -212,6 +236,8 @@ class SingleStepResult:
     def generated_items(self) -> list[RunItem]:
         """Items generated during the agent run (i.e. everything generated after
         `original_input`). Uses session_step_items when available for full observability."""
+        # generated_items 是“下一轮/最终结果”能看到的本轮生成内容。
+        # handoff input filter 可能让模型输入项和 session 观测项不同，所以这里优先 session_step_items。
         items = (
             self.session_step_items if self.session_step_items is not None else self.new_step_items
         )

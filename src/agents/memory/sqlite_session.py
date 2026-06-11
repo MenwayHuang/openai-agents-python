@@ -1,3 +1,13 @@
+"""SQLite Session 示例实现。
+
+中文学习说明：
+- 这个文件演示如何把 Session 协议落到一个真实存储里：SQLite 表保存 session 和 message。
+- 它不是唯一推荐方案，生产项目可以换成 Postgres/MySQL/Redis/对象存储，只要实现
+  `get_items/add_items/pop_item/clear_session` 即可。
+- 对 PPT Agent 来说，这可以作为本地开发期的项目对话历史存储参考；正式上线时建议后端
+  数据库保存项目、任务、消息、生成文件索引。
+"""
+
 from __future__ import annotations
 
 import asyncio
@@ -21,9 +31,13 @@ class SQLiteSession(SessionABC):
     By default, uses an in-memory database that is lost when the process ends.
     For persistent storage, provide a file path.
     """
+    # SQLiteSession 适合作为轻量本地持久化。注意它保存的是 Responses input items，
+    # 不是业务表结构；业务系统通常还需要自己的 projects/tasks/files 表。
 
     session_settings: SessionSettings | None = None
     _file_locks: ClassVar[dict[Path, threading.RLock]] = {}
+    # ClassVar 表示类级别共享变量，不是实例字段。这里用来让同一进程内多个
+    # SQLiteSession 共享同一个文件锁，避免并发写 SQLite 出问题。
     _file_lock_counts: ClassVar[dict[Path, int]] = {}
     _file_locks_guard: ClassVar[threading.Lock] = threading.Lock()
 
@@ -52,12 +66,14 @@ class SQLiteSession(SessionABC):
         self.sessions_table = sessions_table
         self.messages_table = messages_table
         self._local = threading.local()
+        # threading.local() 是线程本地存储：每个线程看到自己的 connection。
         self._connections: set[sqlite3.Connection] = set()
         self._connections_lock = threading.Lock()
         self._closed = False
 
         # For in-memory databases, we need a shared connection to avoid thread isolation
         # For file databases, we use thread-local connections for better concurrency
+        # SQLite 的内存库跟连接绑定，所以必须共享连接；文件库则可以每线程一个连接。
         self._is_memory_db = str(db_path) == ":memory:"
         self._lock_path: Path | None = None
         self._lock_released = False
@@ -113,6 +129,8 @@ class SQLiteSession(SessionABC):
     @contextmanager
     def _locked_connection(self) -> Iterator[sqlite3.Connection]:
         """Serialize sqlite3 access while each operation runs in a worker thread."""
+        # @contextmanager 让普通 generator 函数可以用于 `with`。
+        # 这里保证一次数据库操作期间持有锁，结束后自动退出。
         with self._lock:
             yield self._get_connection()
 
@@ -142,6 +160,7 @@ class SQLiteSession(SessionABC):
 
     def _init_db_for_connection(self, conn: sqlite3.Connection) -> None:
         """Initialize the database schema for a specific connection."""
+        # 注意这里直接拼表名，所以表名应来自受信任配置，不要把用户输入拼进 SQL 标识符。
         conn.execute(
             f"""
             CREATE TABLE IF NOT EXISTS {self.sessions_table} (
@@ -175,6 +194,7 @@ class SQLiteSession(SessionABC):
         conn.commit()
 
     def _insert_items(self, conn: sqlite3.Connection, items: list[TResponseInputItem]) -> None:
+        # 先确保 session 元数据存在，再批量插入 message JSON。
         conn.execute(
             f"""
             INSERT OR IGNORE INTO {self.sessions_table} (session_id) VALUES (?)
@@ -212,6 +232,8 @@ class SQLiteSession(SessionABC):
         session_limit = resolve_session_limit(limit, self.session_settings)
 
         def _get_items_sync():
+            # sqlite3 是同步库。外层用 asyncio.to_thread 把阻塞操作放到线程池，
+            # 避免阻塞事件循环。
             with self._locked_connection() as conn:
                 if session_limit is None:
                     # Fetch all items in chronological order
@@ -264,6 +286,7 @@ class SQLiteSession(SessionABC):
             return
 
         def _add_items_sync():
+            # 批量写入要和 commit 放在同一个锁保护区内。
             with self._locked_connection() as conn:
                 self._insert_items(conn, items)
                 conn.commit()
@@ -280,6 +303,7 @@ class SQLiteSession(SessionABC):
         def _pop_item_sync():
             with self._locked_connection() as conn:
                 # Use DELETE with RETURNING to atomically delete and return the most recent item
+                # DELETE ... RETURNING 可以原子地“删除并返回最后一条”，适合重试回滚。
                 cursor = conn.execute(
                     f"""
                     DELETE FROM {self.messages_table}
@@ -343,6 +367,7 @@ class SQLiteSession(SessionABC):
 
     def close(self) -> None:
         """Close the database connection."""
+        # 服务退出或测试结束时应关闭连接并释放文件锁。
         with self._lock:
             if self._closed:
                 return

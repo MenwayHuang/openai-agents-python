@@ -20,6 +20,9 @@ from .imports import np, npt
 from .model import TTSModel, TTSModelSettings
 from .pipeline_config import VoicePipelineConfig
 
+# 学习提示：StreamedAudioResult 管理 TTS 的并发生成和按顺序输出。
+# 它内部用 asyncio.Task、Queue、deque 保证多个文本片段并发转语音时仍能有序播放。
+
 
 def _audio_to_base64(audio_data: list[bytes]) -> str:
     joined_audio_data = b"".join(audio_data)
@@ -70,6 +73,7 @@ class StreamedAudioResult:
         self._tracing_span: Span[SpeechGroupSpanData] | None = None
 
     async def _start_turn(self):
+        # 每个 turn 开始时创建 speech_group_span，用于 tracing 里聚合语音生成信息。
         if self._started_processing_turn:
             return
 

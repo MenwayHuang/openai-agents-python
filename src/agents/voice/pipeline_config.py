@@ -8,6 +8,9 @@ from ..tracing.util import gen_group_id
 from .model import STTModelSettings, TTSModelSettings, VoiceModelProvider
 from .models.openai_model_provider import OpenAIVoiceModelProvider
 
+# 学习提示：VoicePipelineConfig 集中管理语音流水线配置，包括模型 Provider、
+# STT/TTS 设置和 tracing 配置。default_factory 用于给每个实例创建独立默认对象。
+
 
 @dataclass
 class VoicePipelineConfig:

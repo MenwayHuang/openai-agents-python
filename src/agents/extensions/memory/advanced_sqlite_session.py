@@ -16,6 +16,9 @@ from ...items import TResponseInputItem
 from ...memory import SQLiteSession
 from ...memory.session_settings import SessionSettings, resolve_session_limit
 
+# 学习提示：AdvancedSQLiteSession 在基础 SQLiteSession 上增加分支会话和 usage 分析。
+# 对 PPT Agent 项目库来说，可以参考它如何在持久化层记录更多统计信息。
+
 
 class AdvancedSQLiteSession(SQLiteSession):
     """Enhanced SQLite session with conversation branching and usage analytics."""

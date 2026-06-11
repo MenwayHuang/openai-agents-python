@@ -8,6 +8,9 @@ from ..memory import Session
 RunGroupingKind = Literal["conversation", "session", "group", "run"]
 RunGrouping = tuple[RunGroupingKind, str]
 
+# 学习提示：run grouping 给一次 Runner 调用找一个稳定归属：
+# 优先 conversation，其次 SDK session，再其次 trace group，最后才生成一次性 run id。
+
 
 def resolve_run_grouping(
     *,

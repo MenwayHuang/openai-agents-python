@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+# 学习提示：SandboxRuntimeSessionManager 管理 sandbox session 的创建、复用、清理和快照。
+# 它把“一个 Agent 跑在哪个工作区/容器里”这件事从业务 Agent 配置里拆出来。
+
 import asyncio
 import copy
 import threading
@@ -36,6 +39,8 @@ def _supports_trace_spans() -> bool:
 
 
 class _SandboxSessionResources:
+    """内部资源包装：统一处理 session/client 所有权和清理。"""
+
     def __init__(
         self,
         *,

@@ -1,3 +1,11 @@
+"""Reusable Prompt 配置工具。
+
+中文学习说明：
+- OpenAI Responses API 支持通过 prompt id/version/variables 引用托管 prompt。
+- `Prompt` 是静态配置；`DynamicPromptFunction` 可以根据 run context 和 agent 动态生成 prompt。
+- 对 PPT Agent 来说，早期可以先把 prompt 放代码里；后续商业化可逐步迁移到可版本化的 prompt 配置。
+"""
+
 from __future__ import annotations
 
 import inspect
@@ -60,6 +68,7 @@ class PromptUtil:
         context: RunContextWrapper[Any],
         agent: Agent[Any],
     ) -> ResponsePromptParam | None:
+        # 支持 prompt=None、静态 dict、同步/异步动态函数三种输入，最终统一成 Responses API prompt 参数。
         if prompt is None:
             return None
 

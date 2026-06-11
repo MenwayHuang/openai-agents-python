@@ -1,4 +1,8 @@
-"""Helpers for preserving the user-visible agent identity during execution rewrites."""
+"""Helpers for preserving the user-visible agent identity during execution rewrites.
+
+学习提示：sandbox 等场景会把用户定义的 Agent 克隆/改写成执行用 Agent。
+这些 helper 用一个内部属性保存“用户看到的原 Agent”，避免 hook/result 里身份混乱。
+"""
 
 from __future__ import annotations
 

@@ -1,3 +1,12 @@
+"""Chat Completions 流式 chunk 到 Responses 流式事件的转换器。
+
+中文学习说明：
+- Chat Completions 的流式返回是 ChatCompletionChunk；Runner 更希望看到 Responses 风格事件。
+- 本文件维护 StreamingState，把文本 delta、refusal、reasoning、function call arguments
+  累积并转换成 response.created/output_item.added/text.delta/response.completed 等事件。
+- 对 PPT Agent 来说，如果未来接第三方兼容模型，常需要类似“把 provider 流转换成内部统一事件”的适配层。
+"""
+
 from __future__ import annotations
 
 from collections.abc import AsyncIterator, Iterator
@@ -58,6 +67,7 @@ class Part:
 
 @dataclass
 class StreamingState:
+    # 流式转换的临时状态：记录当前文本位置、工具调用、reasoning、provider_data 等。
     started: bool = False
     text_content_index_and_output: tuple[int, ResponseOutputText] | None = None
     refusal_content_index_and_output: tuple[int, ResponseOutputRefusal] | None = None
@@ -77,6 +87,7 @@ class StreamingState:
 
 
 class SequenceNumber:
+    # Responses stream event 需要递增 sequence_number，这个小类负责生成。
     def __init__(self):
         self._sequence_number = 0
 
@@ -163,6 +174,7 @@ class _StreamOutputLayout:
 
 
 class ChatCmplStreamHandler:
+    # 统一处理 ChatCompletionChunk stream，并 yield Responses 风格的 TResponseStreamEvent。
     @staticmethod
     def _merged_provider_data(
         state: StreamingState,

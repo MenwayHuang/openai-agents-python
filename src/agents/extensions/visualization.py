@@ -5,6 +5,10 @@ import graphviz  # type: ignore
 from agents import Agent
 from agents.handoffs import Handoff
 
+# 学习提示：这个扩展用 graphviz 生成 Agent/工具/Handoff 的关系图。
+# graphviz 是第三方绘图库，这里先生成 DOT 文本，再由 graphviz.Source 渲染图片。
+# 对复杂 PPT Agent 编排很有帮助：可以把“规划 Agent -> 模板 Agent -> 质检 Agent”画出来。
+
 
 def get_main_graph(agent: Agent) -> str:
     """
@@ -24,6 +28,7 @@ def get_main_graph(agent: Agent) -> str:
         edge [penwidth=1.5];
     """
     ]
+    # DOT 图由节点和边两部分组成；这里分别递归收集。
     parts.append(get_all_nodes(agent))
     parts.append(get_all_edges(agent))
     parts.append("}")
@@ -44,6 +49,7 @@ def get_all_nodes(
     """
     if visited is None:
         visited = set()
+    # visited 防止 handoff 形成环时递归无限循环。
     if agent.name in visited:
         return ""
     visited.add(agent.name)
@@ -78,12 +84,14 @@ def get_all_nodes(
 
     for handoff in agent.handoffs:
         if isinstance(handoff, Handoff):
+            # Handoff 是封装后的交接对象，里面记录目标 agent_name。
             parts.append(
                 f'"{handoff.agent_name}" [label="{handoff.agent_name}", '
                 f"shape=box, style=filled, style=rounded, "
                 f"fillcolor=lightyellow, width=1.5, height=0.8];"
             )
         if isinstance(handoff, Agent):
+            # handoffs 也允许直接放 Agent 对象，所以要继续递归它的工具和子 handoff。
             if handoff.name not in visited:
                 parts.append(
                     f'"{handoff.name}" [label="{handoff.name}", '
@@ -110,6 +118,7 @@ def get_all_edges(
     """
     if visited is None:
         visited = set()
+    # 边的生成也要防环，逻辑和节点类似。
     if agent.name in visited:
         return ""
     visited.add(agent.name)
@@ -159,6 +168,7 @@ def draw_graph(agent: Agent, filename: str | None = None) -> graphviz.Source:
     graph = graphviz.Source(dot_code)
 
     if filename:
+        # render 会调用本机 graphviz 可执行文件；环境没有安装 graphviz 时这里可能失败。
         graph.render(filename, format="png", cleanup=True)
 
     return graph

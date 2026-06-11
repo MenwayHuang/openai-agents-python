@@ -1,3 +1,11 @@
+"""SDK 全局默认配置入口。
+
+中文学习说明：
+- 这里设置默认 OpenAI key/client、默认使用 Responses 还是 Chat Completions、Responses transport。
+- 这些是进程级默认值，适合 demo 或简单应用；生产服务更建议通过依赖注入/配置对象显式传递。
+- 注意：真实 API key 不应该写进代码仓库，应来自环境变量或密钥系统。
+"""
+
 from typing import Literal
 
 from openai import AsyncOpenAI
@@ -11,6 +19,7 @@ from .tracing import set_tracing_export_api_key
 
 
 def set_default_openai_key(key: str, use_for_tracing: bool) -> None:
+    # 设置默认 OpenAI API key；use_for_tracing=True 时也把它用于 tracing 导出。
     _openai_shared.set_default_openai_key(key)
 
     if use_for_tracing:
@@ -25,6 +34,7 @@ def set_default_openai_client(client: AsyncOpenAI, use_for_tracing: bool) -> Non
 
 
 def set_default_openai_api(api: Literal["chat_completions", "responses"]) -> None:
+    # 控制字符串模型默认走 Chat Completions 还是 Responses。
     if api == "chat_completions":
         _openai_shared.set_use_responses_by_default(False)
     else:

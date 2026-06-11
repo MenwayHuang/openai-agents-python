@@ -5,6 +5,9 @@ from collections.abc import Callable
 from ..items import TResponseInputItem
 from ..util._types import MaybeAwaitable
 
+# 学习提示：这里定义的是“把 Session 历史和本轮新输入合并”的回调类型。
+# MaybeAwaitable 表示函数既可以同步返回，也可以 async 返回，方便业务方选择实现方式。
+
 SessionInputCallback = Callable[
     [list[TResponseInputItem], list[TResponseInputItem]],
     MaybeAwaitable[list[TResponseInputItem]],

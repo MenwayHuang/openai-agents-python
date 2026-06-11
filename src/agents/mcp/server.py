@@ -1,3 +1,12 @@
+"""MCP server 连接与调用封装。
+
+中文学习说明：
+- MCP（Model Context Protocol）可以把外部服务暴露成工具，让 Agent 动态发现和调用。
+- 本文件定义 MCPServer 抽象，以及 stdio/SSE/Streamable HTTP 三种连接实现。
+- 对 PPT Agent 来说，MCP 可用于后续接入外部素材库、文件系统、设计工具、公司内部服务；
+  但生产环境必须配合工具过滤、审批、超时、错误格式化和服务边界控制。
+"""
+
 from __future__ import annotations
 
 import abc
@@ -222,6 +231,8 @@ MCPStreamTransport = (
 
 class MCPServer(abc.ABC):
     """Base class for Model Context Protocol servers."""
+    # MCPServer 是所有 MCP transport 的统一接口。上层只关心 list_tools/call_tool，
+    # 不关心底层是子进程 stdio、SSE，还是 Streamable HTTP。
 
     def __init__(
         self,
@@ -249,6 +260,7 @@ class MCPServer(abc.ABC):
             tool_meta_resolver: Optional callable that produces MCP request metadata (`_meta`) for
                 tool calls. It is invoked by the Agents SDK before calling `call_tool`.
         """
+        # require_approval 是安全边界：可以要求某些 MCP 工具调用先经过人工/策略审批。
         self.use_structured_content = use_structured_content
         self._needs_approval_policy = self._normalize_needs_approval(
             require_approval=require_approval
@@ -387,6 +399,8 @@ class MCPServer(abc.ABC):
         | Callable[[RunContextWrapper[Any], AgentBase, MCPTool], MaybeAwaitable[bool]]
     ):
         """Normalize approval inputs to booleans or a name->bool map."""
+        # 支持多种配置写法，最后统一成 bool、tool_name->bool 或 callable。
+        # 这让 SDK API 友好，但内部执行时只处理少数标准形态。
 
         if require_approval is None:
             return False
@@ -494,6 +508,8 @@ class MCPServer(abc.ABC):
         When approval is configured with a callable policy and no agent is available, this method
         returns ``True`` to preserve the historical fail-closed behavior.
         """
+        # 将 server 级审批策略转换成 FunctionTool.needs_approval。
+        # 如果是 callable，需要包装成 function tool 接受的签名。
 
         policy = self._needs_approval_policy
 
@@ -527,6 +543,8 @@ class MCPServer(abc.ABC):
 
 class _MCPServerWithClientSession(MCPServer, abc.ABC):
     """Base class for MCP servers that use a `ClientSession` to communicate with the server."""
+    # 大多数 MCP transport 都会建立 ClientSession，这个基类复用连接、缓存 tools、
+    # tool filter、retry、cleanup 等逻辑。
 
     @property
     def cached_tools(self) -> list[MCPTool] | None:
@@ -585,6 +603,8 @@ class _MCPServerWithClientSession(MCPServer, abc.ABC):
         )
         self.session: ClientSession | None = None
         self.exit_stack: AsyncExitStack = AsyncExitStack()
+        # AsyncExitStack 用来统一管理多个 async context manager，
+        # 比如 transport streams 和 ClientSession，cleanup 时一次性关闭。
         self._cleanup_lock: asyncio.Lock = asyncio.Lock()
         self._request_lock: asyncio.Lock = asyncio.Lock()
         self.cache_tools_list = cache_tools_list
@@ -604,6 +624,7 @@ class _MCPServerWithClientSession(MCPServer, abc.ABC):
         self._get_session_id: GetSessionIdCallback | None = None
 
     async def _maybe_serialize_request(self, func: Callable[[], Awaitable[T]]) -> T:
+        # 有些 transport 不支持同一 session 并发请求，需要通过 request_lock 串行化。
         if not self._serialize_session_requests:
             return await func()
         async with self._request_lock:
@@ -616,6 +637,8 @@ class _MCPServerWithClientSession(MCPServer, abc.ABC):
         agent: AgentBase | None = None,
     ) -> list[MCPTool]:
         """Apply the tool filter to the list of tools."""
+        # 工具过滤可以是静态 allow/block list，也可以是动态 callable。
+        # 生产系统建议默认最小暴露工具集合。
         if self.tool_filter is None:
             return tools
 
@@ -750,6 +773,7 @@ class _MCPServerWithClientSession(MCPServer, abc.ABC):
 
     async def connect(self):
         """Connect to the server."""
+        # 连接流程：创建 transport streams -> 建 ClientSession -> initialize -> 保存 session。
         connection_succeeded = False
         try:
             transport = await self.exit_stack.enter_async_context(self.create_streams())
@@ -823,6 +847,8 @@ class _MCPServerWithClientSession(MCPServer, abc.ABC):
         agent: AgentBase | None = None,
     ) -> list[MCPTool]:
         """List the tools available on the server."""
+        # list_tools 可能很贵，所以支持 cache_tools_list。
+        # 但动态 MCP server 工具会变化时，需要关闭缓存或调用 invalidate_tools_cache。
         if not self.session:
             raise UserError("Server not initialized. Make sure you call `connect()` first.")
         session = self.session
@@ -864,6 +890,7 @@ class _MCPServerWithClientSession(MCPServer, abc.ABC):
         meta: dict[str, Any] | None = None,
     ) -> CallToolResult:
         """Invoke a tool on the server."""
+        # MCP 工具调用前先校验 required 参数，随后走 retry 和可选 meta。
         if not self.session:
             raise UserError("Server not initialized. Make sure you call `connect()` first.")
         session = self.session
@@ -898,6 +925,8 @@ class _MCPServerWithClientSession(MCPServer, abc.ABC):
         self, tool_name: str, arguments: dict[str, Any] | None
     ) -> None:
         """Validate required tool parameters from cached MCP tool schemas before invocation."""
+        # 提前用缓存 schema 检查必填参数，能把错误变成清晰 UserError，
+        # 而不是等 MCP server 返回更难读的协议错误。
         if self._tools_list is None:
             return
 
@@ -983,6 +1012,7 @@ class _MCPServerWithClientSession(MCPServer, abc.ABC):
 
     async def cleanup(self):
         """Cleanup the server."""
+        # cleanup 要谨慎处理异常，避免关闭连接时的次要错误掩盖真正的业务/连接错误。
         async with self._cleanup_lock:
             # Only raise HTTP errors if we're cleaning up after a failed connection.
             # During normal teardown (via __aexit__), log but don't raise to avoid
@@ -1093,6 +1123,8 @@ class MCPServerStdio(_MCPServerWithClientSession):
     (https://spec.modelcontextprotocol.io/specification/2024-11-05/basic/transports/#stdio) for
     details.
     """
+    # stdio transport 会启动本地子进程，通过 stdin/stdout 和 MCP server 通讯。
+    # 常用于本地工具或 Node/Python MCP server。
 
     def __init__(
         self,
@@ -1214,6 +1246,7 @@ class MCPServerSse(_MCPServerWithClientSession):
     (https://spec.modelcontextprotocol.io/specification/2024-11-05/basic/transports/#http-with-sse)
     for details.
     """
+    # SSE transport 通过 HTTP + Server-Sent Events 通讯，适合远程 MCP 服务。
 
     def __init__(
         self,
@@ -1350,6 +1383,7 @@ class MCPServerStreamableHttp(_MCPServerWithClientSession):
     (https://modelcontextprotocol.io/specification/2025-03-26/basic/transports#streamable-http)
     for details.
     """
+    # Streamable HTTP 是较新的 MCP transport，支持 session id 和更标准的 HTTP 交互。
 
     def __init__(
         self,
@@ -1421,6 +1455,7 @@ class MCPServerStreamableHttp(_MCPServerWithClientSession):
 
         self.params = params
         self._name = name or f"streamable_http: {self.params['url']}"
+        # Streamable HTTP 请求需要串行化，否则同一 MCP session 上可能并发读写冲突。
         self._serialize_session_requests = True
 
     def create_streams(
@@ -1451,6 +1486,8 @@ class MCPServerStreamableHttp(_MCPServerWithClientSession):
 
     @asynccontextmanager
     async def _isolated_client_session(self):
+        # 共享 session 出现可重试故障时，临时开一个隔离 session 重试，
+        # 避免污染主连接状态。
         async with AsyncExitStack() as exit_stack:
             transport = await exit_stack.enter_async_context(self.create_streams())
             read, write, *_ = transport
@@ -1479,6 +1516,7 @@ class MCPServerStreamableHttp(_MCPServerWithClientSession):
         return await session.call_tool(tool_name, arguments, meta=meta)
 
     def _should_retry_in_isolated_session(self, exc: BaseException) -> bool:
+        # 只对连接关闭、超时、5xx 这类可能由共享 session 状态导致的问题走隔离重试。
         if isinstance(
             exc,
             asyncio.CancelledError
@@ -1569,6 +1607,7 @@ class MCPServerStreamableHttp(_MCPServerWithClientSession):
         arguments: dict[str, Any] | None,
         meta: dict[str, Any] | None = None,
     ) -> CallToolResult:
+        # Streamable HTTP 的 call_tool 比基类更复杂，因为它支持共享 session 失败后的隔离重试。
         if not self.session:
             raise UserError("Server not initialized. Make sure you call `connect()` first.")
 

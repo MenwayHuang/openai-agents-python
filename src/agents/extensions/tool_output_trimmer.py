@@ -40,6 +40,10 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+# 学习提示：这个扩展很适合长链路 Agent。工具输出常常很大，比如搜索结果、
+# 模板 JSON、HTML 片段。它在每次 call_model 前裁剪旧工具输出，保留最近轮次，
+# 兼顾上下文完整性和 token 成本。
+
 
 @dataclass
 class ToolOutputTrimmer:
@@ -69,6 +73,7 @@ class ToolOutputTrimmer:
     trimmable_tools: str | Iterable[str] | None = field(default=None)
 
     def __post_init__(self) -> None:
+        # dataclass 的 __post_init__ 会在自动生成的 __init__ 后执行，适合做参数校验/归一化。
         if self.recent_turns < 1:
             raise ValueError(f"recent_turns must be >= 1, got {self.recent_turns}")
         if self.max_output_chars < 1:
@@ -76,6 +81,7 @@ class ToolOutputTrimmer:
         if self.preview_chars < 0:
             raise ValueError(f"preview_chars must be >= 0, got {self.preview_chars}")
         # Coerce configured tool names to frozenset for immutability.
+        # object.__setattr__ 常用于 frozen/不可变风格对象，这里即使不是 frozen 也能绕过普通赋值语义。
         if self.trimmable_tools is not None:
             if isinstance(self.trimmable_tools, str):
                 trimmable_tools = frozenset({self.trimmable_tools})
@@ -114,6 +120,7 @@ class ToolOutputTrimmer:
 
         for i, item in enumerate(items):
             if i < boundary and isinstance(item, dict):
+                # 只处理 recent boundary 之前的旧 item；最近几轮保持原样，避免影响当前任务质量。
                 item_dict = cast(dict[str, Any], item)
                 item_type = item_dict.get("type")
                 call_id = str(item_dict.get("call_id") or item_dict.get("id") or "")
@@ -174,6 +181,7 @@ class ToolOutputTrimmer:
 
     def _build_call_id_to_names(self, items: list[Any]) -> dict[str, tuple[str, ...]]:
         """Build a mapping from function call_id to candidate tool names."""
+        # 先从 function_call 建立 call_id -> tool name，后面看到 output 才知道它属于哪个工具。
         mapping: dict[str, tuple[str, ...]] = {}
         for item in items:
             if isinstance(item, dict) and item.get("type") == "function_call":
@@ -265,6 +273,7 @@ class ToolOutputTrimmer:
 
     def _trim_tool_search_tool(self, tool: Any) -> Any:
         """Recursively strip bulky descriptions and schema prose from tool search results."""
+        # tool_search 的结果可能包含嵌套 namespace/tool/schema，所以这里递归裁剪。
         if not isinstance(tool, dict):
             return tool
 
@@ -303,6 +312,7 @@ class ToolOutputTrimmer:
 
     def _serialize_json_like(self, value: Any) -> str:
         """Serialize structured tool output for sizing comparisons."""
+        # ensure_ascii=False 让中文保持可读；default=str 兜底处理不可 JSON 序列化对象。
         try:
             return json.dumps(value, ensure_ascii=False, sort_keys=True, default=str)
         except Exception:

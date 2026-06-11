@@ -1,3 +1,13 @@
+"""OpenAI Responses API 的 Model 实现。
+
+中文学习说明：
+- `OpenAIResponsesModel` 把 SDK 内部统一的 Agent 输入、工具、handoff、output_schema
+  转成 `client.responses.create(...)` 参数。
+- `OpenAIResponsesWSModel` 是 WebSocket 传输版本，仍然产出 Responses 流式事件。
+- 文件末尾的 `Converter` 非常关键：它负责把 FunctionTool/WebSearch/FileSearch/MCP/
+  Computer/Shell/ApplyPatch 等工具转换成 Responses API 的 tools payload。
+"""
+
 from __future__ import annotations
 
 import asyncio
@@ -101,6 +111,8 @@ class _NamespaceToolParam(TypedDict):
 
 
 def _json_dumps_default(value: Any) -> Any:
+    # json.dumps 遇到 Pydantic/dataclass/Enum 时默认不会序列化，
+    # 这里提供兜底转换，主要用于 websocket frame 和错误信息。
     model_dump = getattr(value, "model_dump", None)
     if callable(model_dump):
         try:
@@ -213,6 +225,8 @@ class OpenAIResponsesWebSocketOptions(TypedDict):
 
 class _ResponseStreamWithRequestId:
     """Wrap an SDK event stream and retain the originating request ID."""
+    # HTTP streaming response 的 request_id 在底层响应对象上，不一定在每个 event 上。
+    # 这个 wrapper 在消费 stream 时把 request_id 附到 terminal response 上。
 
     _TERMINAL_EVENT_TYPES = {
         "response.completed",
@@ -313,6 +327,7 @@ class _ResponseStreamWithRequestId:
 
 class ResponsesWebSocketError(RuntimeError):
     """Error raised for websocket transport error frames."""
+    # WebSocket error frame 不是普通 HTTP 异常，所以包装成 RuntimeError 并保留 payload/code。
 
     def __init__(self, payload: Mapping[str, Any]):
         event_type = str(payload.get("type") or "error")
@@ -398,6 +413,7 @@ class OpenAIResponsesModel(Model):
     """
     Implementation of `Model` that uses the OpenAI Responses API.
     """
+    # 这是当前 SDK 最核心的 OpenAI 模型适配器。Runner 调模型时最终会落到这里。
 
     def __init__(
         self,
@@ -417,6 +433,7 @@ class OpenAIResponsesModel(Model):
         return is_official_openai_client(self._get_client())
 
     def get_retry_advice(self, request: ModelRetryAdviceRequest) -> ModelRetryAdvice | None:
+        # 复用 OpenAI 专用 retry 规则，判断限流、超时、网络错误等是否可重试。
         return get_openai_retry_advice(request)
 
     async def _maybe_aclose_async_iterator(self, iterator: Any) -> None:
@@ -457,6 +474,8 @@ class OpenAIResponsesModel(Model):
         conversation_id: str | None = None,
         prompt: ResponsePromptParam | None = None,
     ) -> ModelResponse:
+        # 非流式路径：请求 Responses API，记录 response_span，转换 usage，
+        # 最后返回统一 ModelResponse。
         with response_span(disabled=tracing.is_disabled()) as span_response:
             try:
                 response = await self._fetch_response(
@@ -505,6 +524,7 @@ class OpenAIResponsesModel(Model):
                     span_response.span_data.response = response
                     span_response.span_data.input = input
             except Exception as e:
+                # 错误也写入 span，便于 trace 里看到模型调用失败原因。
                 span_response.set_error(
                     SpanError(
                         message="Error getting response",
@@ -540,6 +560,7 @@ class OpenAIResponsesModel(Model):
         """
         Yields a partial message as it is generated, as well as the usage information.
         """
+        # 流式路径：产出 Responses API 的 stream events，Runner 再把它们转成 RunItem 事件。
         with response_span(disabled=tracing.is_disabled()) as span_response:
             try:
                 stream = await self._fetch_response(
@@ -561,6 +582,7 @@ class OpenAIResponsesModel(Model):
                 close_stream_in_background = False
                 try:
                     async for chunk in stream:
+                        # 这里直接 yield provider 事件；上层 run_loop 会继续处理增量和终态。
                         chunk_type = getattr(chunk, "type", None)
                         if isinstance(chunk, ResponseCompletedEvent):
                             final_response = chunk.response
@@ -677,6 +699,8 @@ class OpenAIResponsesModel(Model):
         stream: Literal[True] | Literal[False] = False,
         prompt: ResponsePromptParam | None = None,
     ) -> Response | AsyncIterator[ResponseStreamEvent]:
+        # _fetch_response 是真正发请求的地方。通过 overload 标注，类型检查器能知道
+        # stream=True 返回异步事件流，stream=False 返回完整 Response。
         create_kwargs = self._build_response_create_kwargs(
             system_instructions=system_instructions,
             input=input,
@@ -692,6 +716,7 @@ class OpenAIResponsesModel(Model):
         client = self._get_client()
 
         if not stream:
+            # 普通 HTTP 非流式调用。
             response = await client.responses.create(**create_kwargs)
             return cast(Response, response)
 
@@ -705,6 +730,7 @@ class OpenAIResponsesModel(Model):
 
         # Keep the raw API response open while callers consume the SSE stream so we can expose
         # its request ID on terminal response payloads before cleanup closes the transport.
+        # 流式 HTTP 需要保持底层响应上下文打开，直到调用方消费完事件。
         api_response_cm = stream_create(**create_kwargs)
         api_response = await api_response_cm.__aenter__()
         try:
@@ -732,6 +758,8 @@ class OpenAIResponsesModel(Model):
         stream: bool = False,
         prompt: ResponsePromptParam | None = None,
     ) -> dict[str, Any]:
+        # 这是 Responses 适配器最重要的组装函数：
+        # 输入历史、工具列表、handoff、结构化输出、模型参数、headers 都在这里合成请求参数。
         list_input = ItemHelpers.input_to_new_input_list(input)
         list_input = _to_dump_compatible(list_input)
         list_input = self._remove_openai_responses_api_incompatible_fields(list_input)
@@ -756,6 +784,7 @@ class OpenAIResponsesModel(Model):
             model=effective_computer_tool_model,
         )
         if prompt is None:
+            # 普通模式：本地传 tools payload。
             converted_tools = Converter.convert_tools(
                 tools,
                 handoffs,
@@ -763,6 +792,7 @@ class OpenAIResponsesModel(Model):
                 tool_choice=model_settings.tool_choice,
             )
         else:
+            # prompt-managed 模式：prompt 可能已经管理部分工具，所以允许 opaque tool search surface。
             converted_tools = Converter.convert_tools(
                 tools,
                 handoffs,
@@ -829,6 +859,7 @@ class OpenAIResponsesModel(Model):
         stream_param: Literal[True] | Omit = True if stream else omit
 
         create_kwargs: dict[str, Any] = {
+            # `omit` 是 OpenAI SDK 的特殊值，表示该字段不发送；None 则可能是明确发送 null。
             "previous_response_id": self._non_null_or_omit(previous_response_id),
             "conversation": self._non_null_or_omit(conversation_id),
             "instructions": self._non_null_or_omit(system_instructions),
@@ -883,6 +914,8 @@ class OpenAIResponsesModel(Model):
         - Fake IDs: Removes temporary IDs (FAKE_RESPONSES_ID) that should not be sent to OpenAI.
         - Reasoning items: Filters out provider-specific reasoning items entirely.
         """
+        # 兼容多 provider 场景：如果历史里有 Claude/Gemini 等 provider_data，
+        # 回放到 OpenAI Responses 前要清理，否则 OpenAI API 不认识这些字段。
         # Early return optimization: if no item has provider_data, return unchanged.
         has_provider_data = any(
             isinstance(item, dict) and item.get("provider_data") for item in list_input
@@ -917,6 +950,7 @@ class OpenAIResponsesModel(Model):
         return item
 
     def _get_client(self) -> AsyncOpenAI:
+        # 如果没有注入 client，就懒加载默认 AsyncOpenAI()。
         if self._client is None:
             self._client = AsyncOpenAI()
         if should_disable_provider_managed_retries():
@@ -942,6 +976,8 @@ class OpenAIResponsesWSModel(OpenAIResponsesModel):
     event is received. Successful websocket responses do not currently expose a request ID, so
     `ModelResponse.request_id` remains `None` on this transport.
     """
+    # WebSocket 版本主要用于低延迟流式。它复用 Responses 请求参数构造逻辑，
+    # 但把请求发成 websocket frame。
 
     def __init__(
         self,
@@ -972,6 +1008,8 @@ class OpenAIResponsesWSModel(OpenAIResponsesModel):
         return super()._supports_default_prompt_cache_key()
 
     def get_retry_advice(self, request: ModelRetryAdviceRequest) -> ModelRetryAdvice | None:
+        # WebSocket 重试要特别小心：如果请求 frame 已经发出但还没收到事件，
+        # 重放可能导致服务端执行两次。
         stateful_request = bool(request.previous_response_id or request.conversation_id)
         wrapped_replay_safety = _get_wrapped_websocket_replay_safety(request.error)
         if wrapped_replay_safety == "unsafe":
@@ -1127,6 +1165,7 @@ class OpenAIResponsesWSModel(OpenAIResponsesModel):
     async def _iter_websocket_response_events(
         self, create_kwargs: dict[str, Any]
     ) -> AsyncIterator[ResponseStreamEvent]:
+        # WebSocket 主循环：获取连接锁 -> 准备 frame -> 确保连接 -> send -> recv event -> yield。
         request_timeout = create_kwargs.get("timeout", omit)
         if _is_openai_omitted_value(request_timeout):
             request_timeout = getattr(self._client, "timeout", None)
@@ -1148,6 +1187,7 @@ class OpenAIResponsesWSModel(OpenAIResponsesModel):
             )
             retry_pre_event_disconnect = _should_retry_pre_event_websocket_disconnect()
             while True:
+                # 连接可复用，但每个请求通过 request_lock 串行发送，避免同一 websocket 上请求交错。
                 connection = await self._await_websocket_with_timeout(
                     self._ensure_websocket_connection(
                         ws_url, request_headers, connect_timeout=request_timeouts.connect
@@ -1335,6 +1375,8 @@ class OpenAIResponsesWSModel(OpenAIResponsesModel):
     async def _prepare_websocket_request(
         self, create_kwargs: dict[str, Any]
     ) -> tuple[dict[str, Any], str, dict[str, str]]:
+        # 把 responses.create kwargs 转成 websocket `response.create` frame，
+        # 同时准备 ws URL 和握手 headers。
         await _refresh_openai_client_api_key_if_supported(self._client)
 
         request_kwargs = dict(create_kwargs)
@@ -1443,6 +1485,7 @@ class OpenAIResponsesWSModel(OpenAIResponsesModel):
         *,
         connect_timeout: float | None,
     ) -> Any:
+        # 复用同 URL/headers/事件循环下的 websocket 连接，不匹配时关闭旧连接并新建。
         running_loop = asyncio.get_running_loop()
         identity = (
             ws_url,
@@ -1596,9 +1639,11 @@ class OpenAIResponsesWSModel(OpenAIResponsesModel):
 class ConvertedTools:
     tools: list[ResponsesToolParam]
     includes: list[ResponseIncludable]
+    # includes 用于告诉 Responses API 返回额外数据，例如 file_search 结果。
 
 
 class Converter:
+    # Converter 是“SDK 内部工具类型 -> Responses API wire format”的集中转换器。
     @classmethod
     def _convert_shell_environment(cls, environment: ShellToolEnvironment | None) -> dict[str, Any]:
         """Convert shell environment settings to OpenAI payload shape."""
@@ -1621,6 +1666,7 @@ class Converter:
         handoffs: Sequence[Handoff[Any, Any]] | None = None,
         model: str | ChatModel | None = None,
     ) -> response_create_params.ToolChoice | Omit:
+        # tool_choice 控制模型是否/必须/指定调用某个工具。不同内置工具有不同 wire shape。
         if tool_choice is None:
             return omit
         elif isinstance(tool_choice, MCPToolChoice):
@@ -1861,6 +1907,7 @@ class Converter:
     def get_response_format(
         cls, output_schema: AgentOutputSchemaBase | None
     ) -> ResponseTextConfigParam | Omit:
+        # 结构化最终输出通过 Responses API 的 text.format=json_schema 实现。
         if output_schema is None or output_schema.is_plain_text():
             return omit
         else:
@@ -1883,6 +1930,8 @@ class Converter:
         model: str | ChatModel | None = None,
         tool_choice: Literal["auto", "required", "none"] | str | MCPToolChoice | None = None,
     ) -> ConvertedTools:
+        # 将本地 Tool 列表转换成 Responses API 的 tools 参数。
+        # 同名 namespace function tools 会先聚合成 namespace wrapper，再插回 tools 列表。
         converted_tools: list[ResponsesToolParam | None] = []
         includes: list[ResponseIncludable] = []
         namespace_index_by_name: dict[str, int] = {}
@@ -1951,6 +2000,7 @@ class Converter:
             converted_tools[index] = _require_responses_tool_param(namespace_payload)
 
         for handoff in handoffs:
+            # handoff 在 API 层也是一个 function tool：模型调用它表示“切换到另一个 agent”。
             converted_tools.append(cls._convert_handoff_tool(handoff))
 
         return ConvertedTools(
@@ -1965,6 +2015,8 @@ class Converter:
         *,
         include_defer_loading: bool = True,
     ) -> tuple[FunctionToolParam, ResponseIncludable | None]:
+        # FunctionTool 的 schema 来自 Python 函数签名/Pydantic schema，
+        # strict=True 时模型参数必须严格符合 schema。
         function_tool_param: FunctionToolParam = {
             "name": tool.name,
             "parameters": tool.params_json_schema,
@@ -2009,6 +2061,8 @@ class Converter:
         use_preview_computer_tool: bool = False,
     ) -> tuple[ResponsesToolParam, ResponseIncludable | None]:
         """Returns converted tool and includes"""
+        # 各类工具的最终 wire format 都在这里分发。阅读时重点看 FunctionTool、
+        # WebSearchTool、FileSearchTool、HostedMCPTool、Shell/ApplyPatch。
 
         if isinstance(tool, FunctionTool):
             return cls._convert_function_tool(tool)

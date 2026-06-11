@@ -1,3 +1,12 @@
+"""Agent-as-tool 嵌套调用的临时状态缓存。
+
+中文学习说明：
+- `Agent.as_tool()` 会把一个 agent 包成 function tool；这个子 agent 运行结果需要临时挂到
+  对应 tool_call 上，供父 run 后续读取。
+- 缓存按 tool_call 对象 id 和稳定签名双重索引，并用 scope_id 隔离不同 RunState 恢复实例。
+- 这是内存态缓存，不是持久化存储；真正持久化由 RunState 序列化 nested agent run state 完成。
+"""
+
 from __future__ import annotations
 
 import weakref
@@ -53,6 +62,8 @@ def _tool_call_signature(
     tool_call: ResponseFunctionToolCall,
 ) -> ToolCallSignature:
     """Build a stable signature for fallback lookup across tool call instances."""
+    # 恢复/反序列化后 tool_call 可能不是同一个 Python 对象，
+    # 所以除了 id(object) 外，还需要用 call_id/name/arguments 等内容建立 fallback signature。
     return (
         tool_call.call_id,
         tool_call.name,
@@ -123,6 +134,7 @@ def record_agent_tool_run_result(
     scope_id: str | None = None,
 ) -> None:
     """Store the nested agent run result by tool call identity."""
+    # 子 agent 执行结束或中断后，把结果记录到内存缓存，父 run 解析工具输出时再取出。
     tool_call_obj_id = id(tool_call)
     _agent_tool_run_results_by_obj[tool_call_obj_id] = run_result
     _index_agent_tool_run_result(tool_call, tool_call_obj_id, scope_id=scope_id)
@@ -143,6 +155,7 @@ def consume_agent_tool_run_result(
     scope_id: str | None = None,
 ) -> RunResult | RunResultStreaming | None:
     """Return and drop the stored nested agent run result for the given tool call."""
+    # consume 表示读取后删除，避免同一个子 agent 结果被重复使用。
     obj_id = id(tool_call)
     if _tool_call_obj_matches_scope(obj_id, scope_id=scope_id):
         run_result = _agent_tool_run_results_by_obj.pop(obj_id, None)

@@ -5,6 +5,14 @@ functions and approval plumbing live in tool_execution.py.
 
 from __future__ import annotations
 
+# 中文学习注释：
+# 这个文件放“具体工具类型”的执行动作类：
+# - ComputerAction：执行点击/输入/截图等 computer tool 动作；
+# - LocalShellAction/ShellAction：执行 shell 命令并归一化输出；
+# - CustomToolAction：执行 raw string custom tool；
+# - ApplyPatchAction：执行文件补丁操作。
+# 通用审批/归一化 helper 在 tool_execution.py，这里更接近真正的副作用执行。
+
 import asyncio
 import dataclasses
 import inspect
@@ -76,6 +84,8 @@ __all__ = [
 
 def _serialize_trace_payload(payload: Any) -> str:
     """Serialize tool payloads for tracing while tolerating non-JSON values."""
+    # trace 里要存字符串/JSON；工具 payload 可能是 Pydantic、dataclass、dict 或普通对象。
+    # 这里做 best-effort 序列化，避免 trace 记录本身抛异常。
     if payload is None:
         return ""
     if isinstance(payload, str):
@@ -92,6 +102,8 @@ def _serialize_trace_payload(payload: Any) -> str:
 
 class ComputerAction:
     """Execute computer tool actions and emit screenshot outputs with hooks fired."""
+    # ComputerAction 会把模型请求的 UI 操作转发给 Computer driver，
+    # 执行完成后一定返回截图，供模型观察下一步状态。
 
     TRACE_TOOL_NAME = "computer"
     """Tracing should expose the GA computer tool alias."""
@@ -108,6 +120,7 @@ class ComputerAction:
         acknowledged_safety_checks: list[ComputerCallOutputAcknowledgedSafetyCheck] | None = None,
     ) -> RunItem:
         """Run a computer action, capturing a screenshot and notifying hooks."""
+        # 外层负责 trace span、hook、错误记录；真正动作在 _execute_action_and_capture。
         trace_tool_name = get_tool_trace_name_for_tool(action.computer_tool) or cls.TRACE_TOOL_NAME
 
         async def _run_action(span: Any | None) -> RunItem:
@@ -188,6 +201,7 @@ class ComputerAction:
         cls, computer: Any, tool_call: ResponseComputerToolCall
     ) -> str:
         """Execute computer actions (sync or async drivers) and return the final screenshot."""
+        # Computer driver 的方法可能是同步也可能是 async，maybe_call 统一 await 结果。
 
         async def maybe_call(method_name: str, *args: Any, **kwargs: Any) -> Any:
             method = getattr(computer, method_name, None)
@@ -204,6 +218,7 @@ class ComputerAction:
         last_action_was_screenshot = False
         last_screenshot_result: Any = None
         for action in cls._iter_actions(tool_call):
+            # GA Responses API 支持 actions[] 批量动作；这里逐个执行。
             action_type = get_mapping_or_attr(action, "type")
             action_keys = cls._normalize_modifier_keys(get_mapping_or_attr(action, "keys"))
             last_action_was_screenshot = False
@@ -273,6 +288,7 @@ class ComputerAction:
 
     @staticmethod
     def _iter_actions(tool_call: ResponseComputerToolCall) -> list[Any]:
+        # 兼容旧版单 action 字段和新版 actions[] 字段。
         if tool_call.actions:
             return list(tool_call.actions)
         if tool_call.action is not None:
@@ -314,6 +330,8 @@ class ComputerAction:
         method: Any,
         kwargs: dict[str, Any],
     ) -> dict[str, Any]:
+        # 不同 Computer driver 支持的参数可能不同。
+        # 这里通过 inspect.signature 过滤不支持的 kwargs，尽量兼容旧 driver。
         filtered_kwargs = {key: value for key, value in kwargs.items() if value is not None}
         if not filtered_kwargs:
             return {}
@@ -361,6 +379,7 @@ class ComputerAction:
 
 class LocalShellAction:
     """Execute local shell commands via the LocalShellTool with lifecycle hooks."""
+    # LocalShellAction 是旧 local_shell 工具执行路径，新项目可优先看 ShellAction。
 
     @classmethod
     async def execute(
@@ -413,6 +432,8 @@ class LocalShellAction:
 
 class ShellAction:
     """Execute shell calls, handling approvals and normalizing outputs."""
+    # ShellAction 是新版 shell tool 执行器：
+    # 先处理审批，再调用 executor，最后把文本/结构化输出归一化成 shell_call_output。
 
     @classmethod
     async def execute(
@@ -430,6 +451,7 @@ class ShellAction:
         agent_hooks = agent.hooks
 
         async def _run_call(span: Any | None) -> RunItem:
+            # with_tool_function_span 会把 _run_call 包进 trace span。
             if span and config.trace_include_sensitive_data:
                 span.span_data.input = _serialize_trace_payload(
                     dataclasses.asdict(shell_call.action)
@@ -440,6 +462,7 @@ class ShellAction:
             )
 
             if needs_approval_result:
+                # shell 命令属于高风险副作用，支持 needs_approval/on_approval。
                 approval_status, approval_item = await resolve_approval_status(
                     tool_name=shell_tool.name,
                     call_id=shell_call.call_id,
@@ -486,6 +509,7 @@ class ShellAction:
 
             try:
                 executor = call.shell_tool.executor
+                # 本地 shell 必须由应用提供 executor；SDK 不直接替你执行系统命令。
                 if executor is None:
                     raise ModelBehaviorError("Shell tool has no local executor configured.")
                 executor_result = executor(request)
@@ -496,6 +520,7 @@ class ShellAction:
                 )
 
                 if isinstance(result, ShellResult):
+                    # ShellResult 是结构化返回，可以保留 stdout/stderr/exit_code/provider_data。
                     normalized = [normalize_shell_output(entry) for entry in result.output]
                     result_max_output_length = normalize_max_output_length(result.max_output_length)
                     if result_max_output_length is None:
@@ -514,6 +539,7 @@ class ShellAction:
                     shell_output_payload = [serialize_shell_output(entry) for entry in normalized]
                     provider_meta = dict(result.provider_data or {})
                 else:
+                    # executor 也可以简单返回字符串，SDK 会包装成 stdout。
                     output_text = str(result)
                     if requested_max_output_length is not None:
                         max_output_length = requested_max_output_length
@@ -595,6 +621,8 @@ class ShellAction:
 
 class CustomToolAction:
     """Execute Responses custom tool calls and return custom_tool_call_output items."""
+    # CustomTool 只有 raw string input，没有 JSON schema 参数。
+    # 适合“把一段 DSL/查询语句交给工具”的场景。
 
     @classmethod
     async def execute(
@@ -616,6 +644,7 @@ class CustomToolAction:
             raise ModelBehaviorError("Custom tool call is missing input.")
 
         tool_context = ToolContext.from_agent_context(
+            # CustomTool 也会拿到 ToolContext，便于访问 run context、tool_call_id、run_config。
             context_wrapper,
             call_id,
             tool_name=custom_tool.name,
@@ -629,6 +658,7 @@ class CustomToolAction:
                 span.span_data.input = tool_input
 
             needs_approval_result = await evaluate_needs_approval_setting(
+                # custom tool 的审批参数就是原始输入字符串。
                 custom_tool.runtime_needs_approval(), context_wrapper, tool_input, call_id
             )
 
@@ -666,6 +696,7 @@ class CustomToolAction:
 
             try:
                 result = custom_tool.on_invoke_tool(tool_context, tool_input)
+                # on_invoke_tool 可以返回同步值，也可以返回 awaitable。
                 result = await result if inspect.isawaitable(result) else result
                 output_text = cls._normalize_output(result)
             except Exception as exc:
@@ -728,6 +759,8 @@ class CustomToolAction:
 
 class ApplyPatchAction:
     """Execute apply_patch operations with approvals and editor integration."""
+    # ApplyPatchAction 把模型生成的补丁操作交给 editor。
+    # 真实系统里这类工具一定要配审批和路径边界，因为它会修改文件。
 
     @classmethod
     async def execute(
@@ -743,6 +776,7 @@ class ApplyPatchAction:
         apply_patch_tool: ApplyPatchTool = call.apply_patch_tool
         agent_hooks = agent.hooks
         operations = coerce_apply_patch_operations(
+            # 先把原始 payload 归一化成 ApplyPatchOperation 列表。
             call.tool_call,
             context_wrapper=context_wrapper,
         )
@@ -763,6 +797,7 @@ class ApplyPatchAction:
 
             needs_approval_result = False
             for operation in operations:
+                # 每个 operation 都可以单独触发审批。
                 if await evaluate_needs_approval_setting(
                     apply_patch_tool.needs_approval, context_wrapper, operation, call_id
                 ):
@@ -813,6 +848,7 @@ class ApplyPatchAction:
                 operation_outputs: list[str] = []
                 editor = apply_patch_tool.editor
                 for operation in operations:
+                    # editor 是注入的执行器，真正文件修改逻辑不在这里写死。
                     if operation.type == "create_file":
                         result = editor.create_file(operation)
                     elif operation.type == "update_file":

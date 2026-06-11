@@ -16,6 +16,10 @@ from ..model_settings import ToolChoice
 from ..run_config import ToolErrorFormatter
 from ..tool import Tool
 
+# 学习提示：这个文件集中定义 Realtime 模式的配置类型。
+# TypedDict/TypeAlias/Literal 让 Python 在运行时保持轻量，同时给编辑器和类型检查器
+# 提供更明确的字段和取值范围。
+
 RealtimeModelName: TypeAlias = (
     Literal[
         "gpt-realtime",
@@ -69,6 +73,7 @@ class RealtimeClientMessage(TypedDict):
 
     other_data: NotRequired[dict[str, Any]]
     """Merged into the message body."""
+    # NotRequired 表示 TypedDict 中该字段可选，适合描述 JSON payload。
 
 
 class RealtimeInputAudioTranscriptionConfig(TypedDict):

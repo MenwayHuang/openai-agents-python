@@ -13,12 +13,16 @@ from ..model import STTModel, TTSModel, VoiceModelProvider
 from .openai_stt import OpenAISTTModel
 from .openai_tts import OpenAITTSModel
 
+# 学习提示：OpenAIVoiceModelProvider 是 voice 模块的 OpenAI Provider 工厂。
+# 它负责创建/复用 AsyncOpenAI 客户端，再按名称返回 STT 或 TTS 模型实例。
+
 _http_client: httpx.AsyncClient | None = None
 
 
 # If we create a new httpx client for each request, that would mean no sharing of connection pools,
 # which would mean worse latency and resource usage. So, we share the client across requests.
 def shared_http_client() -> httpx.AsyncClient:
+    # 共享 httpx.AsyncClient 可以复用连接池，降低多次语音请求的延迟和资源开销。
     global _http_client
     if _http_client is None:
         _http_client = DefaultAsyncHttpxClient()
@@ -75,6 +79,7 @@ class OpenAIVoiceModelProvider(VoiceModelProvider):
     # We lazy load the client in case you never actually use OpenAIProvider(). Otherwise
     # AsyncOpenAI() raises an error if you don't have an API key set.
     def _get_client(self) -> AsyncOpenAI:
+        # 懒加载客户端：只有真的使用 voice 模型时才要求 API key 存在。
         if self._client is None:
             self._client = _openai_shared.get_default_openai_client() or AsyncOpenAI(
                 api_key=self._stored_api_key or _openai_shared.get_default_openai_key(),

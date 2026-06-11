@@ -1,3 +1,12 @@
+"""Responses 格式与 Chat Completions 格式之间的转换器。
+
+中文学习说明：
+- Runner 内部倾向使用 Responses 风格的 input/output/tool item。
+- Chat Completions API 使用 messages/tools/tool_calls 格式，所以需要 Converter 互转。
+- 这个文件是学习“适配旧接口/第三方兼容模型”的好材料：你可以看到缺失能力如何兜底、
+  reasoning/tool output/handoff 如何转换，以及哪些能力无法安全转换。
+"""
+
 from __future__ import annotations
 
 import json
@@ -71,10 +80,12 @@ _OMITTED_TOOL_OUTPUT_PLACEHOLDER = "[tool output omitted]"
 
 
 class Converter:
+    # 全部方法都是 classmethod，因为它不保存实例状态，只做纯转换。
     @classmethod
     def convert_tool_choice(
         cls, tool_choice: Literal["auto", "required", "none"] | str | MCPToolChoice | None
     ) -> ChatCompletionToolChoiceOptionParam | Omit:
+        # Chat Completions 的 tool_choice 比 Responses 少一些能力，比如 MCPToolChoice。
         if tool_choice is None:
             return omit
         elif isinstance(tool_choice, MCPToolChoice):
@@ -101,6 +112,7 @@ class Converter:
     def convert_response_format(
         cls, final_output_schema: AgentOutputSchemaBase | None
     ) -> ResponseFormat | Omit:
+        # 结构化输出在 Chat Completions 里通过 response_format=json_schema 表达。
         if not final_output_schema or final_output_schema.is_plain_text():
             return omit
 
@@ -129,12 +141,16 @@ class Converter:
                 Contains provider-specific information like model name and response_id,
                 which is attached to output items.
         """
+        # ChatCompletionMessage 可能包含普通文本、refusal、tool_calls、reasoning_content。
+        # 这里把它们统一转成 Responses output items，方便 Runner 后续处理工具循环。
         items: list[TResponseOutputItem] = []
 
         # Check if message is agents.extensions.models.litellm_model.InternalChatCompletionMessage
         # We can't actually import it here because litellm is an optional dependency
         # So we use hasattr to check for reasoning_content and thinking_blocks
         if hasattr(message, "reasoning_content") and message.reasoning_content:
+            # LiteLLM/兼容网关可能在 Chat message 上挂 reasoning_content，
+            # SDK 将其转换为 Responses reasoning item。
             reasoning_kwargs: dict[str, Any] = {
                 "id": FAKE_RESPONSES_ID,
                 "summary": [Summary(text=message.reasoning_content, type="summary_text")],
@@ -201,6 +217,7 @@ class Converter:
         if message.tool_calls:
             for tool_call in message.tool_calls:
                 if tool_call.type == "function":
+                    # Chat tool_call -> Responses function_call。
                     # Create base function call item
                     func_call_kwargs: dict[str, Any] = {
                         "id": FAKE_RESPONSES_ID,
@@ -240,6 +257,7 @@ class Converter:
 
     @classmethod
     def maybe_easy_input_message(cls, item: Any) -> EasyInputMessageParam | None:
+        # 识别最简单的 Chat/Responses 兼容消息：只有 role 和 content 两个字段。
         if not isinstance(item, dict):
             return None
 
@@ -303,6 +321,7 @@ class Converter:
     @classmethod
     def maybe_response_output_message(cls, item: Any) -> ResponseOutputMessageParam | None:
         # ResponseOutputMessage is only used for messages with role assistant
+        # Responses output message 转 Chat 时会成为 assistant message。
         if (
             isinstance(item, dict)
             and item.get("type") == "message"
@@ -373,6 +392,8 @@ class Converter:
     def extract_all_content(
         cls, content: str | Iterable[ResponseInputContentWithAudioParam]
     ) -> str | list[ChatCompletionContentPartParam]:
+        # Responses content part -> Chat content part。
+        # 例如 input_text -> text，input_image -> image_url，input_file -> file。
         if isinstance(content, str):
             return content
         out: list[ChatCompletionContentPartParam] = []
@@ -509,6 +530,9 @@ class Converter:
         - tool calls get attached to the *current* assistant message, or create one if none.
         - tool outputs => ChatCompletionToolMessageParam
         """
+        # 这是本文件最核心的输入转换：把一串 Responses input items 转成 Chat messages。
+        # 它需要维护 current_assistant_msg，因为 Responses 里 tool_call 是独立 item，
+        # Chat Completions 里 tool_calls 必须挂在 assistant message 上。
 
         if isinstance(items, str):
             return [
@@ -525,6 +549,8 @@ class Converter:
         normalized_base_url = base_url.rstrip("/") if base_url is not None else None
 
         def flush_assistant_message(*, clear_pending_reasoning_content: bool = True) -> None:
+            # 当前 assistant message 累积完后写入 result。
+            # Chat API 不接受空 tool_calls，所以 flush 前要删除空数组。
             nonlocal current_assistant_msg, pending_reasoning_content
             if current_assistant_msg is not None:
                 # The API doesn't support empty arrays for tool_calls
@@ -546,6 +572,7 @@ class Converter:
                 pending_reasoning_content = None
 
         def ensure_assistant_message() -> ChatCompletionAssistantMessageParam:
+            # tool_call 出现时必须有一个 assistant message 承载它；没有就创建。
             nonlocal current_assistant_msg, pending_thinking_blocks
             if current_assistant_msg is None:
                 current_assistant_msg = ChatCompletionAssistantMessageParam(role="assistant")
@@ -712,6 +739,7 @@ class Converter:
 
                 tool_calls = list(asst.get("tool_calls", []))
                 arguments = func_call["arguments"] if func_call["arguments"] else "{}"
+                # Responses function_call -> Chat assistant.tool_calls[]
                 new_tool_call = ChatCompletionMessageFunctionToolCallParam(
                     id=func_call["call_id"],
                     type="function",
@@ -739,6 +767,8 @@ class Converter:
             # 5) function call output => tool message
             elif func_output := cls.maybe_function_tool_call_output(item):
                 flush_assistant_message()
+                # Responses function_call_output -> Chat tool message。
+                # Chat API 通常只接受文本工具结果，非文本内容要么过滤要么 strict 报错。
                 output_content = cast(
                     str | Iterable[ResponseInputContentWithAudioParam], func_output["output"]
                 )
@@ -782,6 +812,8 @@ class Converter:
 
             # 7) reasoning message => extract thinking blocks if present
             elif reasoning_item := cls.maybe_reasoning_message(item):
+                # reasoning item 在 Chat API 里没有标准字段。不同 provider 通过
+                # reasoning_content/thinking_blocks 等扩展支持，所以这里按 provider_data 尝试回放。
                 # Reconstruct thinking blocks from content (text) and encrypted_content (signature)
                 content_items = reasoning_item.get("content", [])
                 encrypted_content = reasoning_item.get("encrypted_content")
@@ -863,6 +895,8 @@ class Converter:
 
     @classmethod
     def tool_to_openai(cls, tool: Tool) -> ChatCompletionToolParam:
+        # Chat Completions 只支持 function tool。Hosted tools、MCP、web/file search 等
+        # Responses 内置工具不能直接传给 Chat API。
         if isinstance(tool, FunctionTool):
             ensure_function_tool_supports_responses_only_features(
                 tool,
@@ -885,6 +919,7 @@ class Converter:
 
     @classmethod
     def convert_handoff_tool(cls, handoff: Handoff[Any, Any]) -> ChatCompletionToolParam:
+        # handoff 在 Chat API 里同样伪装成 function tool。
         return {
             "type": "function",
             "function": {

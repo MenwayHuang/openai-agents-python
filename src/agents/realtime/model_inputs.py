@@ -8,6 +8,9 @@ from typing_extensions import NotRequired, TypedDict
 from .config import RealtimeSessionModelSettings
 from .model_events import RealtimeModelToolCallEvent
 
+# 学习提示：这里定义 Session 发给 RealtimeModel 的命令对象，比如发送文本、
+# 发送音频、发送工具结果、更新 session 配置。它是“上层业务 -> 模型传输层”的输入协议。
+
 
 class RealtimeModelRawClientMessage(TypedDict):
     """A raw message to be sent to the model."""

@@ -8,6 +8,9 @@ if TYPE_CHECKING:
     from .spans import Span
     from .traces import Trace
 
+# 学习提示：Scope 用 ContextVar 保存当前 trace/span。
+# ContextVar 能在 asyncio 并发请求之间隔离上下文，避免 A 请求的 span 混到 B 请求。
+
 _current_span: contextvars.ContextVar["Span[Any] | None"] = contextvars.ContextVar(
     "current_span", default=None
 )

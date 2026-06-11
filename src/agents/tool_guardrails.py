@@ -1,5 +1,12 @@
 from __future__ import annotations
 
+# 中文学习注释：
+# 这个文件定义工具级 guardrail：
+# - ToolInputGuardrail：工具函数真正执行前检查工具参数/上下文；
+# - ToolOutputGuardrail：工具函数执行后检查工具输出。
+# 和 Agent 级 guardrail 不同，工具 guardrail 可以选择：
+# allow、reject_content（不执行/替换输出但继续 run）、raise_exception（停止 run）。
+
 import inspect
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
@@ -39,6 +46,7 @@ class ToolOutputGuardrailResult:
 
 class RejectContentBehavior(TypedDict):
     """Rejects the tool call/output but continues execution with a message to the model."""
+    # reject_content 不会让整个 run 崩溃，而是把 message 当作工具输出给模型。
 
     type: Literal["reject_content"]
     message: str
@@ -59,6 +67,8 @@ class AllowBehavior(TypedDict):
 @dataclass
 class ToolGuardrailFunctionOutput:
     """The output of a tool guardrail function."""
+    # behavior 是工具 guardrail 的核心差异点。
+    # 默认 allow；需要拦截时用 reject_content 或 raise_exception。
 
     output_info: Any
     """
@@ -86,6 +96,7 @@ class ToolGuardrailFunctionOutput:
         Returns:
             ToolGuardrailFunctionOutput configured to allow normal execution.
         """
+        # 便捷构造：允许工具继续。
         return cls(output_info=output_info, behavior=AllowBehavior(type="allow"))
 
     @classmethod
@@ -99,6 +110,7 @@ class ToolGuardrailFunctionOutput:
         Returns:
             ToolGuardrailFunctionOutput configured to reject the content.
         """
+        # 便捷构造：拒绝工具输入/输出，并把 message 反馈给模型。
         return cls(
             output_info=output_info,
             behavior=RejectContentBehavior(type="reject_content", message=message),
@@ -114,12 +126,14 @@ class ToolGuardrailFunctionOutput:
         Returns:
             ToolGuardrailFunctionOutput configured to raise an exception.
         """
+        # 便捷构造：触发异常，停止整个 run。
         return cls(output_info=output_info, behavior=RaiseExceptionBehavior(type="raise_exception"))
 
 
 @dataclass
 class ToolInputGuardrailData:
     """Input data passed to a tool input guardrail function."""
+    # 输入 guardrail 可从 ToolContext 读取 tool_name、tool_call_id、参数、run_config 等。
 
     context: ToolContext[Any]
     """
@@ -138,6 +152,7 @@ class ToolOutputGuardrailData(ToolInputGuardrailData):
 
     Extends input data with the tool's output.
     """
+    # 输出 guardrail 比输入 guardrail 多一个 output 字段，用于检查工具返回值。
 
     output: Any
     """
@@ -151,6 +166,7 @@ TContext_co = TypeVar("TContext_co", bound=Any, covariant=True)
 @dataclass
 class ToolInputGuardrail(Generic[TContext_co]):
     """A guardrail that runs before a function tool is invoked."""
+    # 只适用于 FunctionTool；执行点在 run_internal/tool_execution.py。
 
     guardrail_function: Callable[
         [ToolInputGuardrailData], MaybeAwaitable[ToolGuardrailFunctionOutput]
@@ -168,6 +184,7 @@ class ToolInputGuardrail(Generic[TContext_co]):
         return self.name or self.guardrail_function.__name__
 
     async def run(self, data: ToolInputGuardrailData) -> ToolGuardrailFunctionOutput:
+        # guardrail 函数支持同步/异步两种写法。
         if not callable(self.guardrail_function):
             raise UserError(f"Guardrail function must be callable, got {self.guardrail_function}")
 
@@ -180,6 +197,7 @@ class ToolInputGuardrail(Generic[TContext_co]):
 @dataclass
 class ToolOutputGuardrail(Generic[TContext_co]):
     """A guardrail that runs after a function tool is invoked."""
+    # 工具执行完成后检查输出；可以替换为拒绝消息，也可以抛异常。
 
     guardrail_function: Callable[
         [ToolOutputGuardrailData], MaybeAwaitable[ToolGuardrailFunctionOutput]
@@ -234,6 +252,7 @@ def tool_input_guardrail(
     | Callable[[_ToolInputFuncSync | _ToolInputFuncAsync], ToolInputGuardrail[Any]]
 ):
     """Decorator to create a ToolInputGuardrail from a function."""
+    # 装饰器支持 @tool_input_guardrail 和 @tool_input_guardrail(name="...") 两种风格。
 
     def decorator(f: _ToolInputFuncSync | _ToolInputFuncAsync) -> ToolInputGuardrail[Any]:
         return ToolInputGuardrail(guardrail_function=f, name=name or f.__name__)
@@ -270,6 +289,7 @@ def tool_output_guardrail(
     | Callable[[_ToolOutputFuncSync | _ToolOutputFuncAsync], ToolOutputGuardrail[Any]]
 ):
     """Decorator to create a ToolOutputGuardrail from a function."""
+    # 输出 guardrail 的装饰器，与输入 guardrail 结构一致。
 
     def decorator(f: _ToolOutputFuncSync | _ToolOutputFuncAsync) -> ToolOutputGuardrail[Any]:
         return ToolOutputGuardrail(guardrail_function=f, name=name or f.__name__)

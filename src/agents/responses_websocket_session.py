@@ -19,6 +19,10 @@ from .run import Runner
 from .run_config import RunConfig
 from .run_state import RunState
 
+# 学习提示：这个文件提供 Responses WebSocket 的会话级封装。
+# 多次 Runner.run 共享同一个 websocket-capable OpenAIProvider，可以减少重复建连。
+# PPT Agent 本地 MVP 暂时不一定用 WebSocket，但正式交互式生成/长流式输出可以参考。
+
 
 @dataclass(frozen=True)
 class ResponsesWebSocketSession:
@@ -31,6 +35,7 @@ class ResponsesWebSocketSession:
         self._validate_provider_alignment()
 
     def _validate_provider_alignment(self) -> MultiProvider:
+        # 确保 session.provider 和 run_config.model_provider 里持有的是同一个 OpenAIProvider。
         model_provider = self.run_config.model_provider
         if not isinstance(model_provider, MultiProvider):
             raise TypeError(
@@ -47,6 +52,7 @@ class ResponsesWebSocketSession:
         await self._validate_provider_alignment().aclose()
 
     def _prepare_runner_kwargs(self, method_name: str, kwargs: Mapping[str, Any]) -> dict[str, Any]:
+        # 这个 session 已经绑定 run_config，调用方不允许再传一个不同 run_config。
         self._validate_provider_alignment()
         if "run_config" in kwargs:
             raise ValueError(
@@ -107,6 +113,8 @@ async def responses_websocket_session(
     Drain or close streamed iterators before the context exits. Exiting the context while a
     websocket request is still in flight may force-close the shared connection.
     """
+    # asynccontextmanager 把 async generator 变成 async with 可用的上下文管理器：
+    # 进入时 yield session，退出时 finally 关闭 provider 资源。
     model_provider = MultiProvider(
         openai_api_key=api_key,
         openai_base_url=base_url,

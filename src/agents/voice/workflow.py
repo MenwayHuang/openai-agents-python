@@ -9,6 +9,9 @@ from ..items import TResponseInputItem
 from ..result import RunResultStreaming
 from ..run import Runner
 
+# 学习提示：VoiceWorkflow 是“转写文本 -> Agent 文本回复”的业务层抽象。
+# 默认实现 SingleAgentVoiceWorkflow 只是把每次转写交给一个普通 Agent 流式运行。
+
 
 class VoiceWorkflowBase(abc.ABC):
     """
@@ -45,6 +48,7 @@ class VoiceWorkflowHelper:
     @classmethod
     async def stream_text_from(cls, result: RunResultStreaming) -> AsyncIterator[str]:
         """Wraps a `RunResultStreaming` object and yields text events from the stream."""
+        # 这里只抽取 response.output_text.delta，忽略工具事件等其它流式事件。
         async for event in result.stream_events():
             if (
                 event.type == "raw_response_event"

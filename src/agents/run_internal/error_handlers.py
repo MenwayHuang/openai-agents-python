@@ -27,6 +27,9 @@ from ..run_error_handlers import (
 from .items import ReasoningItemIdPolicy, run_item_to_input_item
 from .turn_preparation import get_output_schema
 
+# 学习提示：这里处理 Runner 异常后的恢复/格式化逻辑。
+# 当模型输出非法、超过最大轮次或触发自定义错误处理器时，会把历史、输出和 trace 数据整理出来。
+
 
 def build_run_error_data(
     *,

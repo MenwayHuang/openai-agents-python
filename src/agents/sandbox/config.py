@@ -10,6 +10,9 @@ from ..models.interface import Model
 
 DEFAULT_PYTHON_SANDBOX_IMAGE: Final = "python:3.14-slim"
 
+# 学习提示：sandbox 配置集中在这里，包括默认镜像和 memory 生成配置。
+# 这些配置偏 SDK 内部能力，当前 PPT Agent 只需理解“运行环境配置”和“记忆生成配置”分离即可。
+
 
 def _default_memory_phase_one_model_settings() -> ModelSettings:
     return ModelSettings(reasoning=Reasoning(effort="medium"))
@@ -71,6 +74,7 @@ class MemoryGenerateConfig:
     """
 
     def __post_init__(self) -> None:
+        # __post_init__ 做配置边界校验，避免运行到后面才发现阈值不合理。
         if self.max_raw_memories_for_consolidation <= 0:
             raise ValueError(
                 "MemoryGenerateConfig.max_raw_memories_for_consolidation must be greater than 0."

@@ -5,6 +5,15 @@ approvals, and turn processing; all symbols here are internal and not part of th
 
 from __future__ import annotations
 
+# 中文学习注释：
+# 这个文件是 Runner 的内部运行循环工具箱。
+# run.py 负责“整场 run 的状态管理”，这里负责“一轮 turn 怎么跑”：
+# - start_streaming：流式主循环；
+# - run_single_turn_streamed：流式单轮；
+# - run_single_turn：非流式单轮；
+# - get_new_response：实际调用模型；
+# - get_single_step_result_from_response/turn_resolution：解析模型响应并执行工具/交接/最终输出。
+
 import asyncio
 import dataclasses as _dc
 import json
@@ -259,6 +268,8 @@ __all__ = [
 
 
 def _should_attach_generic_agent_error(exc: Exception) -> bool:
+    # 有些异常已经有专门 trace 信息，比如 guardrail/model behavior。
+    # 其他普通异常才补一个通用 agent error，避免 trace 重复噪声。
     return not isinstance(
         exc,
         ModelBehaviorError | InputGuardrailTripwireTriggered | OutputGuardrailTripwireTriggered,
@@ -271,6 +282,8 @@ async def _should_persist_stream_items(
     server_conversation_tracker: OpenAIServerConversationTracker | None,
     streamed_result: RunResultStreaming,
 ) -> bool:
+    # 流式场景下，input guardrail 可能在后台任务里触发。
+    # 如果已经触发，就不要再把本轮 stream items 持久化到 session。
     if session is None or server_conversation_tracker is not None:
         return False
     should_skip_session_save = await input_guardrail_tripwire_triggered_for_stream(streamed_result)
@@ -282,6 +295,8 @@ def _prepare_turn_input_items(
     generated_items: list[RunItem],
     reasoning_item_id_policy: ReasoningItemIdPolicy | None,
 ) -> list[TResponseInputItem]:
+    # 把本轮用户输入和历史 generated_items 合并为模型输入。
+    # reasoning_item_id_policy 控制 reasoning item 是否保留原 ID。
     caller_items = ItemHelpers.input_to_new_input_list(caller_input)
     continuation_items = run_items_to_input_items(generated_items, reasoning_item_id_policy)
     return prepare_model_input_items(caller_items, continuation_items)
@@ -293,6 +308,7 @@ def _complete_stream_interruption(
     interruptions: list[ToolApprovalItem],
     processed_response: ProcessedResponse | None,
 ) -> None:
+    # 流式中断时也要把队列置为完成，否则调用方 stream_events() 会一直等。
     streamed_result.interruptions = interruptions
     streamed_result._last_processed_response = processed_response
     streamed_result.is_complete = True
@@ -368,6 +384,8 @@ async def _run_output_guardrails_for_stream(
     context_wrapper: RunContextWrapper[TContext],
     streamed_result: RunResultStreaming,
 ) -> list[Any]:
+    # 流式最终输出出来后，输出 guardrail 仍然要跑。
+    # 这里把 task 存在 streamed_result 上，方便外部取消/收尾时观察。
     streamed_result._output_guardrails_task = asyncio.create_task(
         run_output_guardrails(
             agent.output_guardrails + (run_config.output_guardrails or []),
@@ -400,6 +418,7 @@ async def _finalize_streamed_final_output(
     response_id: str | None,
     store_setting: bool | None,
 ) -> None:
+    # 流式最终成功收尾：跑输出 guardrail、保存 items、设置 final_output、关闭事件队列。
     output_guardrail_results = await _run_output_guardrails_for_stream(
         agent=agent,
         run_config=run_config,
@@ -426,6 +445,7 @@ async def _finalize_streamed_interruption(
     interruptions: list[ToolApprovalItem],
     processed_response: ProcessedResponse | None,
 ) -> None:
+    # 流式中断收尾：先保存本轮 items，再把 interruption 信息写进 streamed_result。
     await save_items(items, response_id, store_setting)
     _complete_stream_interruption(
         streamed_result,
@@ -456,6 +476,8 @@ async def start_streaming(
     sandbox_runtime: SandboxRuntime[TContext] | None = None,
 ):
     """Run the streaming loop for a run result."""
+    # start_streaming 会作为后台 task 运行。
+    # RunResultStreaming.stream_events() 从 event_queue 读事件，和这里的生产者形成异步队列模型。
     if streamed_result.trace:
         streamed_result.trace.start(mark_as_current=True)
     if run_state is not None:
@@ -483,6 +505,8 @@ async def start_streaming(
     task_usage_start = snapshot_usage(context_wrapper.usage)
 
     try:
+        # 下面这段和 AgentRunner.run 的非流式初始化很像：
+        # 恢复 RunState、创建 conversation tracker、准备 session 输入、初始化 tool_use_tracker。
         resolved_reasoning_item_id_policy: ReasoningItemIdPolicy | None = (
             run_config.reasoning_item_id_policy
             if run_config.reasoning_item_id_policy is not None
@@ -507,6 +531,8 @@ async def start_streaming(
             server_conversation_tracker = None
 
         def _sync_conversation_tracking_from_tracker() -> None:
+            # OpenAI server conversation 的 ID/previous_response_id 可能在模型响应后更新，
+            # 收尾时要同步回 RunState/RunResultStreaming。
             if server_conversation_tracker is None:
                 return
             if run_state is not None:
@@ -522,6 +548,7 @@ async def start_streaming(
             )
 
         if run_state is None:
+            # 首次流式运行也会创建 RunState，保证中断/审批后可恢复。
             run_state = RunState(
                 context=context_wrapper,
                 original_input=copy_input_items(starting_input),
@@ -572,6 +599,8 @@ async def start_streaming(
         session_input_items_for_persistence: list[TResponseInputItem] | None = None
 
         if is_resumed_state and server_conversation_tracker is not None and run_state is not None:
+            # 从 RunState 恢复 server-managed conversation 的本地 tracker，
+            # 这样它知道哪些输入已经发过、哪些工具调用输出还没发。
             session_items: list[TResponseInputItem] | None = None
             if session is not None:
                 try:
@@ -587,14 +616,17 @@ async def start_streaming(
             )
 
         streamed_result._event_queue.put_nowait(AgentUpdatedStreamEvent(new_agent=current_agent))
+        # 流式消费者一开始就能知道当前 agent。
 
         prepared_input: str | list[TResponseInputItem]
         if is_resumed_state and run_state is not None:
+            # 恢复时不重新拼 session 历史，只使用 RunState 里保存的原始输入视图。
             prepared_input = normalize_resumed_input(starting_input)
             streamed_result.input = prepared_input
             streamed_result._original_input_for_persistence = []
             streamed_result._stream_input_persisted = True
         else:
+            # 首次流式运行：根据是否 server-managed conversation 决定是否把 session 历史拼进去。
             server_manages_conversation = server_conversation_tracker is not None
             prepared_input, session_items_snapshot = await prepare_input_with_session(
                 starting_input,
@@ -669,6 +701,8 @@ async def start_streaming(
 
     try:
         while True:
+            # 流式主循环，每轮调用 run_single_turn_streamed。
+            # 和非流式不同的是：模型 token/工具调用会边到边写 event_queue。
             all_input_guardrails = (
                 starting_agent.input_guardrails + (run_config.input_guardrails or [])
                 if current_turn == 0 and not is_resumed_state
@@ -729,6 +763,8 @@ async def start_streaming(
 
             if is_resumed_state and run_state is not None and run_state._current_step is not None:
                 if isinstance(run_state._current_step, NextStepInterruption):
+                    # 流式恢复中断：和非流式一样，不重打模型请求，
+                    # 直接从上次 processed_response 继续工具审批后的执行。
                     if not run_state._model_responses or not run_state._last_processed_response:
                         raise UserError("No model response found in previous state")
 
@@ -789,6 +825,7 @@ async def start_streaming(
                     ).store
 
                     if isinstance(turn_result.next_step, NextStepInterruption):
+                        # 还有审批项未处理，保存后结束 stream。
                         await _finalize_streamed_interruption(
                             streamed_result=streamed_result,
                             save_items=_save_resumed_items,
@@ -801,6 +838,7 @@ async def start_streaming(
                         break
 
                     if isinstance(turn_result.next_step, NextStepHandoff):
+                        # 恢复后发生 handoff，推送 AgentUpdatedStreamEvent，再继续下一轮。
                         current_agent = turn_result.next_step.new_agent
                         if run_state is not None:
                             run_state._current_agent = current_agent
@@ -815,6 +853,7 @@ async def start_streaming(
                         continue
 
                     if isinstance(turn_result.next_step, NextStepFinalOutput):
+                        # 恢复后直接完成，跑输出 guardrail 并关闭队列。
                         await _finalize_streamed_final_output(
                             streamed_result=streamed_result,
                             agent=current_agent,
@@ -840,6 +879,7 @@ async def start_streaming(
                     run_state._current_step = None
 
             if streamed_result._cancel_mode == "after_turn":
+                # 调用方可以要求当前 turn 结束后停止流式运行。
                 streamed_result.is_complete = True
                 streamed_result._event_queue.put_nowait(QueueCompleteSentinel())
                 break
@@ -849,6 +889,7 @@ async def start_streaming(
 
             all_tools = await get_all_tools(execution_agent, context_wrapper)
             await initialize_computer_tools(tools=all_tools, context_wrapper=context_wrapper)
+            # 每轮重新解析工具，支持动态工具启用和 MCP 工具列表变化。
 
             if current_span is None:
                 handoff_names = [
@@ -879,6 +920,7 @@ async def start_streaming(
                 run_state._current_turn_persisted_item_count = 0
 
             if max_turns is not None and current_turn > max_turns:
+                # 流式模式下 max_turns 也支持 error handler 把错误转成 final output。
                 _error_tracing.attach_error_to_span(
                     current_span,
                     SpanError(
@@ -956,6 +998,8 @@ async def start_streaming(
                 break
 
             if current_turn == 1:
+                # input guardrail 只对首轮用户输入执行。
+                # parallel guardrails 会作为后台 task 跑，模型流式输出同时进行。
                 if sequential_guardrails:
                     await run_input_guardrails_with_queue(
                         starting_agent,
@@ -984,6 +1028,7 @@ async def start_streaming(
 
                 if parallel_guardrails:
                     streamed_result._input_guardrails_task = asyncio.create_task(
+                        # 并行 guardrail 的结果会通过 streamed_result 反馈给主循环。
                         run_input_guardrails_with_queue(
                             starting_agent,
                             parallel_guardrails,
@@ -1017,6 +1062,7 @@ async def start_streaming(
                             else []
                         )
                     turn_result = await run_single_turn_streamed(
+                        # 真正的“流式单轮模型调用 + 响应解析 + 工具执行”在这里。
                         streamed_result,
                         current_bindings,
                         hooks,
@@ -1089,6 +1135,7 @@ async def start_streaming(
                     server_conversation_tracker.track_server_items(turn_result.model_response)
 
                 if isinstance(turn_result.next_step, NextStepHandoff):
+                    # handoff 后要推送当前 agent 更新，让 UI/调用方知道后续是谁在说话。
                     await _save_stream_items_without_count(
                         turn_session_items,
                         turn_result.model_response.response_id,
@@ -1111,6 +1158,7 @@ async def start_streaming(
                         streamed_result._event_queue.put_nowait(QueueCompleteSentinel())
                         break
                 elif isinstance(turn_result.next_step, NextStepFinalOutput):
+                    # final output 是流式终点。
                     await _finalize_streamed_final_output(
                         streamed_result=streamed_result,
                         agent=current_agent,
@@ -1124,6 +1172,7 @@ async def start_streaming(
                     )
                     break
                 elif isinstance(turn_result.next_step, NextStepInterruption):
+                    # interruption 是需要人工审批/外部动作后恢复的终点。
                     processed_response_for_state = turn_result.processed_response
                     if processed_response_for_state is None and run_state is not None:
                         processed_response_for_state = run_state._last_processed_response
@@ -1149,6 +1198,7 @@ async def start_streaming(
                     )
                     break
                 elif isinstance(turn_result.next_step, NextStepRunAgain):
+                    # 工具执行结果已经生成，保存后继续下一轮让模型读取工具结果。
                     if streamed_result._state is not None:
                         streamed_result._state._current_step = NextStepRunAgain()
 
@@ -1200,6 +1250,7 @@ async def start_streaming(
     else:
         streamed_result.is_complete = True
     finally:
+        # 无论成功/异常/取消，都要释放资源并关闭 trace/span。
         _sync_conversation_tracking_from_tracker()
         if streamed_result._input_guardrails_task:
             try:
@@ -1257,10 +1308,16 @@ async def run_single_turn_streamed(
     error_handlers: RunErrorHandlers[TContext] | None = None,
 ) -> SingleStepResult:
     """Run a single streamed turn and emit events as results arrive."""
+    # 流式单轮分三段：
+    # 1. 准备 prompt/input/tools/handoffs；
+    # 2. async for 消费模型流事件并实时入队；
+    # 3. 终态响应到齐后交给 turn_resolution 执行工具/解析 next step。
     public_agent = bindings.public_agent
     execution_agent = bindings.execution_agent
 
     async def raise_if_input_guardrail_tripwire_known() -> None:
+        # 工具 side effects 前检查并行 input guardrail 是否已经触发。
+        # 如果触发，就阻止工具执行，避免“不安全输入已经导致外部副作用”。
         tripwire_result = streamed_result._triggered_input_guardrail_result
         if tripwire_result is not None:
             raise InputGuardrailTripwireTriggered(tripwire_result)
@@ -1282,6 +1339,8 @@ async def run_single_turn_streamed(
     emitted_tool_search_fingerprints: set[str] = set()
     # Precompute the lookup map used for streaming descriptions. Function tools use the same
     # collision-free lookup keys as runtime dispatch, including deferred top-level aliases.
+    # 流式时 tool_call event 先到，真正执行可能后到。
+    # 这里提前建 tool_map，是为了给 UI 事件补工具描述/title/origin。
     tool_map: dict[NamedToolLookupKey, Any] = cast(
         dict[NamedToolLookupKey, Any],
         build_function_tool_lookup_map(
@@ -1315,6 +1374,7 @@ async def run_single_turn_streamed(
     context_wrapper.turn_input = list(turn_input)
 
     if should_run_agent_start_hooks:
+        # Agent start hook 每个 agent 生命周期只跑一次；handoff 后会重新跑。
         agent_hook_context = AgentHookContext(
             context=context_wrapper.context,
             usage=context_wrapper.usage,
@@ -1336,6 +1396,7 @@ async def run_single_turn_streamed(
     streamed_result._current_agent_output_schema = get_output_schema(public_agent)
 
     system_prompt, prompt_config = await asyncio.gather(
+        # 系统提示词和 prompt 配置可以并发解析。
         execution_agent.get_system_prompt(context_wrapper),
         execution_agent.get_prompt(context_wrapper),
     )
@@ -1349,6 +1410,7 @@ async def run_single_turn_streamed(
     streamed_response_output: list[ResponseOutputItem] = []
 
     if server_conversation_tracker is not None:
+        # 服务端托管 conversation：本地只发送增量/必要 items。
         items_for_input = (
             pending_server_items if pending_server_items else streamed_result._model_input_items
         )
@@ -1361,6 +1423,7 @@ async def run_single_turn_streamed(
             else 0,
         )
     else:
+        # 本地管理历史：把原始输入和 generated items 拼成完整模型输入。
         input = _prepare_turn_input_items(
             streamed_result.input,
             streamed_result._model_input_items,
@@ -1368,6 +1431,7 @@ async def run_single_turn_streamed(
         )
 
     filtered = await maybe_filter_model_input(
+        # call_model_input_filter 是用户可配置的输入过滤器，常用于裁剪历史或脱敏。
         agent=public_agent,
         run_config=run_config,
         context_wrapper=context_wrapper,
@@ -1458,6 +1522,8 @@ async def run_single_turn_streamed(
     stream_failed_retry_attempts: list[int] = [0]
 
     retry_stream = stream_response_with_retry(
+        # stream_response_with_retry 把模型流式请求和重试封装在一起。
+        # 如果请求失败，rewind_model_request 会回滚 session/conversation 的“已发送”标记。
         get_stream=lambda: model.stream_response(
             filtered.instructions,
             filtered.input,
@@ -1481,6 +1547,7 @@ async def run_single_turn_streamed(
     )
 
     async for event in retry_stream:
+        # 逐个消费模型流事件：原始事件先直接发给外部，再识别 tool/reasoning 等语义事件。
         streamed_result._event_queue.put_nowait(RawResponsesStreamEvent(data=event))
 
         terminal_response: Response | None = None
@@ -1527,6 +1594,7 @@ async def run_single_turn_streamed(
             )
 
         if isinstance(event, ResponseOutputItemDoneEvent):
+            # output item 完成时，可以生成更高层的 RunItemStreamEvent。
             output_item = event.item
             streamed_response_output.append(output_item)
             output_item_type = getattr(output_item, "type", None)
@@ -1559,6 +1627,7 @@ async def run_single_turn_streamed(
                 hosted_mcp_tool_metadata.update(collect_mcp_list_tools_metadata([output_item]))
 
             elif isinstance(output_item, TOOL_CALL_TYPES):
+                # 工具调用事件：查工具描述和来源，包装成 ToolCallItem 发给消费者。
                 output_call_id: str | None = getattr(
                     output_item, "call_id", getattr(output_item, "id", None)
                 )
@@ -1636,6 +1705,7 @@ async def run_single_turn_streamed(
         )
 
     if not final_response:
+        # 正常流式响应必须有 terminal response，否则无法进入 turn_resolution。
         raise ModelBehaviorError("Model did not produce a final response!")
 
     if server_conversation_tracker is not None:
@@ -1645,6 +1715,7 @@ async def run_single_turn_streamed(
         server_conversation_tracker.track_server_items(final_response)
 
     single_step_result = await get_single_step_result_from_response(
+        # 流式读完模型后，和非流式共用同一套 turn_resolution 逻辑。
         bindings=bindings,
         original_input=streamed_result.input,
         pre_step_items=streamed_result._model_input_items,
@@ -1701,6 +1772,7 @@ async def run_single_turn_streamed(
     items_to_filter = [item for item in items_to_filter if not isinstance(item, HandoffCallItem)]
 
     filtered_result = _dc.replace(single_step_result, new_step_items=items_to_filter)
+    # 前面流式过程中已经发过一些 tool/reasoning 事件，这里过滤掉重复项再推送 step result。
     stream_step_result_to_queue(filtered_result, streamed_result._event_queue)
     return single_step_result
 
@@ -1724,6 +1796,7 @@ async def run_single_turn(
     error_handlers: RunErrorHandlers[TContext] | None = None,
 ) -> SingleStepResult:
     """Run a single non-streaming turn of the agent loop."""
+    # 非流式单轮：准备输入 -> get_new_response 调模型 -> turn_resolution 解析并执行工具。
     public_agent = bindings.public_agent
     execution_agent = bindings.execution_agent
     try:
@@ -1733,6 +1806,7 @@ async def run_single_turn(
     context_wrapper.turn_input = list(turn_input)
 
     if should_run_agent_start_hooks:
+        # 每个 agent 第一次进入 run loop 时触发生命周期 hook。
         agent_hook_context = AgentHookContext(
             context=context_wrapper.context,
             usage=context_wrapper.usage,
@@ -1749,6 +1823,7 @@ async def run_single_turn(
         )
 
     system_prompt, prompt_config = await asyncio.gather(
+        # 系统提示词可能是动态函数，prompt 也可能来自外部配置，所以这里异步获取。
         execution_agent.get_system_prompt(context_wrapper),
         execution_agent.get_prompt(context_wrapper),
     )
@@ -1756,11 +1831,14 @@ async def run_single_turn(
     output_schema = get_output_schema(execution_agent)
     handoffs = await get_handoffs(execution_agent, context_wrapper)
     if server_conversation_tracker is not None:
+        # Responses conversation 模式：由 tracker 计算本轮应该发给服务端的输入。
         input = server_conversation_tracker.prepare_input(original_input, generated_items)
     else:
+        # 本地历史模式：把用户输入和之前的 RunItem 转成模型输入 items。
         input = _prepare_turn_input_items(original_input, generated_items, reasoning_item_id_policy)
 
     new_response = await get_new_response(
+        # get_new_response 只负责模型调用和 hook，不执行工具。
         bindings,
         system_prompt,
         input,
@@ -1779,6 +1857,7 @@ async def run_single_turn(
     )
 
     return await get_single_step_result_from_response(
+        # 解析模型输出、执行工具/交接/最终输出判断，都在 turn_resolution 里完成。
         bindings=bindings,
         original_input=original_input,
         pre_step_items=generated_items,
@@ -1813,9 +1892,12 @@ async def get_new_response(
     prompt_cache_key_resolver: PromptCacheKeyResolver | None = None,
 ) -> ModelResponse:
     """Call the model and return the raw response, handling retries and hooks."""
+    # 这里是“真的调用模型”的非流式入口。
+    # 入参已经是本轮模型输入；返回的是 ModelResponse，还不是最终业务输出。
     public_agent = bindings.public_agent
     execution_agent = bindings.execution_agent
     filtered = await maybe_filter_model_input(
+        # 最后一层模型输入过滤，可做 history compaction、隐私脱敏、按 agent 裁剪输入。
         agent=public_agent,
         run_config=run_config,
         context_wrapper=context_wrapper,
@@ -1828,8 +1910,10 @@ async def get_new_response(
     model = get_model(execution_agent, run_config)
     model_settings = get_model_settings(execution_agent, run_config)
     model_settings = maybe_reset_tool_choice(public_agent, tool_use_tracker, model_settings)
+    # maybe_reset_tool_choice 用来防止模型在 required tool_choice 下无限调用同一个工具。
 
     if server_conversation_tracker is not None:
+        # 标记这些输入已经发送；如果重试失败会通过 rewind_model_request 回滚。
         server_conversation_tracker.mark_input_as_sent(filtered.input)
 
     await asyncio.gather(
@@ -1874,12 +1958,15 @@ async def get_new_response(
     model_settings = model_settings_with_prompt_cache_key(model_settings, prompt_cache_key)
 
     async def rewind_model_request() -> None:
+        # 模型调用失败准备重试时，需要回滚 session/conversation，
+        # 否则下一次请求会误以为部分输入已经成功发送/保存。
         items_to_rewind = session_items_to_rewind if session_items_to_rewind is not None else []
         await rewind_session_items(session, items_to_rewind, server_conversation_tracker)
         if server_conversation_tracker is not None:
             server_conversation_tracker.rewind_input(filtered.input)
 
     new_response = await get_response_with_retry(
+        # 统一重试封装，模型 provider 可以通过 get_retry_advice 调整重试策略。
         get_response=lambda: model.get_response(
             system_instructions=filtered.instructions,
             input=filtered.input,
@@ -1907,6 +1994,7 @@ async def get_new_response(
         server_conversation_tracker.mark_input_as_sent(filtered.input)
 
     context_wrapper.usage.add(new_response.usage)
+    # usage 会累加到 run context，最终体现在 RunResult/trace 中。
 
     await asyncio.gather(
         (

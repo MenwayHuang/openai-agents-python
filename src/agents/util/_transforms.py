@@ -2,6 +2,9 @@ import re
 
 from ..logger import logger
 
+# 学习提示：模型函数调用的 tool name 只能包含安全字符。
+# 这个工具把任意名称转换成 function-call 友好的 snake_case 风格。
+
 
 def transform_string_function_style(name: str) -> str:
     transformed_name = name.replace(" ", "_")

@@ -1,3 +1,14 @@
+"""Agent 运行结果对象。
+
+中文学习说明：
+- `RunResult` 是非流式运行的最终快照，你通常从这里拿 `final_output`、
+  `new_items`、`raw_responses`，也可以在人工审批中断后转成 `RunState` 继续执行。
+- `RunResultStreaming` 是流式运行句柄，它背后有后台任务和事件队列，前端/CLI 可以
+  通过 `stream_events()` 一边消费语义事件，一边等待最终结果。
+- 对 PPT Agent 来说，这个文件对应“生成一次 PPT 方案/套版任务后，服务层要返回什么
+  以及如何在需要人工确认时恢复任务”的设计参考。
+"""
+
 from __future__ import annotations
 
 import abc
@@ -81,6 +92,9 @@ def _populate_state_from_result(
     auto_previous_response_id: bool = False,
 ) -> RunState[Any]:
     """Populate a RunState with common fields from a RunResult."""
+    # 这是 result -> state 的公共搬运函数：非流式和流式结果都靠它把当前 agent、
+    # 新增消息、模型响应、guardrail 结果、审批中断、trace/sandbox 等运行时信息
+    # 放回 `RunState`，这样下一次 `Runner.run(..., state)` 才能无缝续跑。
     state._current_agent = result.last_agent
     model_input_items = getattr(result, "_model_input_items", None)
     if isinstance(model_input_items, list):
@@ -160,6 +174,8 @@ def _input_items_for_result(
 
 def _starting_agent_for_state(result: RunResultBase) -> Agent[Any]:
     """Return the root agent graph that should seed RunState identity resolution."""
+    # 恢复运行时不能只知道“最后一个 agent”，还要知道整个 agent 图的根节点。
+    # 原因是不同 agent 可能重名，RunState 需要从根图推导稳定身份来反序列化。
     state = getattr(result, "_state", None)
     starting_agent = getattr(state, "_starting_agent", None)
     if isinstance(starting_agent, Agent):
@@ -174,6 +190,8 @@ def _starting_agent_for_state(result: RunResultBase) -> Agent[Any]:
 
 @dataclass
 class RunResultBase(abc.ABC):
+    # 抽象基类放所有结果共有字段。`abc.ABC` 表示它不直接实例化，
+    # 具体由 `RunResult` 和 `RunResultStreaming` 实现 `last_agent` 等差异行为。
     input: str | list[TResponseInputItem]
     """The original input items i.e. the items before run() was called. This may be a mutated
     version of the input, if there are handoff input filters that mutate the input.
@@ -230,6 +248,8 @@ class RunResultBase(abc.ABC):
     ) -> core_schema.CoreSchema:
         # RunResult objects are runtime values; schema generation should treat them as instances
         # instead of recursively traversing internal dataclass annotations.
+        # 这是 Pydantic 的“魔法接口”：告诉 Pydantic 这个对象只按实例校验，
+        # 不要深挖内部字段生成复杂 schema，避免运行态对象被错误序列化。
         return core_schema.is_instance_schema(cls)
 
     @property
@@ -244,6 +264,8 @@ class RunResultBase(abc.ABC):
         collected. Callers can use this when they are done inspecting the result and want to
         eagerly drop any associated agent graph.
         """
+        # 运行结果会引用 agent 图。长时间服务里如果结果被缓存，容易把整个 agent 图
+        # 一直留在内存里；这里通过弱引用释放强引用，降低内存占用。
         if release_new_items:
             for item in self.new_items:
                 release = getattr(item, "release_agent", None)
@@ -279,6 +301,8 @@ class RunResultBase(abc.ABC):
         Returns:
             The final output casted to the given type.
         """
+        # 注意：默认情况下这里主要是给类型检查器看的“类型断言”，不会真的转换数据。
+        # 只有 `raise_if_incorrect_type=True` 时才在运行时做 isinstance 检查。
         if raise_if_incorrect_type and not isinstance(self.final_output, cls):
             raise TypeError(f"Final output is not of type {cls.__name__}")
 
@@ -295,6 +319,8 @@ class RunResultBase(abc.ABC):
         full plain-item history. ``mode="normalized"`` prefers the canonical continuation input
         when handoff filtering rewrote model history, while remaining identical for ordinary runs.
         """
+        # 这个方法很适合学习“多轮 Agent 如何续聊”：它把原始输入和本轮新增输出
+        # 拼成下一次可发给模型的 Responses API input items。
         original_items: list[TResponseInputItem] = ItemHelpers.input_to_new_input_list(self.input)
         reasoning_item_id_policy = getattr(self, "_reasoning_item_id_policy", None)
         replay_items = _input_items_for_result(
@@ -310,6 +336,8 @@ class RunResultBase(abc.ABC):
 
         Returns `None` for ordinary top-level runs.
         """
+        # `Agent.as_tool()` 会把一个 agent 当作工具嵌套调用。这里让外层代码能知道：
+        # 当前结果是不是来自嵌套 agent-tool，以及它对应的工具名、call_id、原始参数。
         from .tool_context import ToolContext
 
         if not isinstance(self.context_wrapper, ToolContext):
@@ -332,6 +360,7 @@ class RunResultBase(abc.ABC):
 
 @dataclass
 class RunResult(RunResultBase):
+    # 非流式结果：`Runner.run()` 完成后一次性返回。适合后端 API 的普通请求响应模式。
     _last_agent: Agent[Any]
     _last_agent_ref: weakref.ReferenceType[Agent[Any]] | None = field(
         init=False,
@@ -368,6 +397,8 @@ class RunResult(RunResultBase):
     """Pending tool approval requests (interruptions) for this run."""
 
     def __post_init__(self) -> None:
+        # dataclass 初始化后保存弱引用，后续 `release_agents()` 才能释放强引用但保留
+        # 尽量可读的访问路径。
         self._last_agent_ref = weakref.ref(self._last_agent)
 
     @property
@@ -414,6 +445,11 @@ class RunResult(RunResultBase):
                 result = await Runner.run(agent, state)
             ```
         """
+        # 人工审批/中断恢复的典型入口：
+        # 1. 第一次 run 发现需要审批，结果里有 `interruptions`
+        # 2. 调 `to_state()` 得到可持久化/可修改的状态
+        # 3. 调 `state.approve(...)` 或 `state.reject(...)`
+        # 4. 再把 state 交给 Runner 继续跑
         # Create a RunState from the current result
         original_input_for_state = getattr(self, "_original_input", None)
         state = RunState(
@@ -450,6 +486,8 @@ class RunResultStreaming(RunResultBase):
     - A MaxTurnsExceeded exception if the agent exceeds the max_turns limit.
     - A GuardrailTripwireTriggered exception if a guardrail is tripped.
     """
+    # 流式结果：调用方先拿到这个对象，然后后台 run loop 持续往 `_event_queue`
+    # 写事件。调用方用 `async for event in result.stream_events()` 消费。
 
     current_agent: Agent[Any]
     """The current agent that is running."""
@@ -480,6 +518,8 @@ class RunResultStreaming(RunResultBase):
     """Filtered items used to build model input between streaming turns."""
 
     # Queues that the background run_loop writes to
+    # asyncio.Queue 是异步生产者/消费者队列：后台任务写入模型增量、工具事件等，
+    # 前台 `stream_events()` 异步读出，适合 WebSocket/SSE/终端流式展示。
     _event_queue: asyncio.Queue[StreamEvent | QueueCompleteSentinel] = field(
         default_factory=asyncio.Queue, repr=False
     )
@@ -539,6 +579,7 @@ class RunResultStreaming(RunResultBase):
     _sandbox_cleanup_callback_registered: bool = field(default=False, init=False, repr=False)
 
     def __post_init__(self, _run_impl_task: asyncio.Task[Any] | None) -> None:
+        # `InitVar` 参数只参与初始化，不会成为 dataclass 字段；这里用它兼容旧参数名。
         self._current_agent_ref = weakref.ref(self.current_agent)
         # Store the original input at creation time (it will be set via input field)
         if self._original_input is None:
@@ -570,6 +611,8 @@ class RunResultStreaming(RunResultBase):
         self.__dict__["current_agent"] = None
 
     async def _run_sandbox_cleanup(self) -> None:
+        # sandbox 是“受控执行环境”。流式任务结束或异常时，需要异步清理资源，
+        # 例如临时文件、远程容器、会话句柄等。
         sandbox_cleanup = self._sandbox_cleanup
         if sandbox_cleanup is None:
             return
@@ -591,6 +634,8 @@ class RunResultStreaming(RunResultBase):
         await task
 
     def ensure_sandbox_cleanup_on_completion(self) -> None:
+        # 给后台 run_loop_task 挂一个 done callback，确保调用方忘记显式清理时，
+        # sandbox 资源也会在任务结束后被回收。
         if (
             self._sandbox_cleanup is None
             or self.run_loop_task is None
@@ -671,6 +716,8 @@ class RunResultStreaming(RunResultBase):
         Note: After calling cancel(), you should continue consuming stream_events()
         to allow the cancellation to complete properly.
         """
+        # `immediate` 适合用户立刻停止生成；`after_turn` 适合希望当前模型响应/工具执行
+        # 收尾后再停，这样 session、usage、trace 更完整。
         # Store the cancel mode for the background task to check
         self._cancel_mode = mode
 
@@ -702,6 +749,8 @@ class RunResultStreaming(RunResultBase):
         - A MaxTurnsExceeded exception if the agent exceeds the max_turns limit.
         - A GuardrailTripwireTriggered exception if a guardrail is tripped.
         """
+        # 这是流式结果最核心的消费循环：不断检查错误、等待事件队列、yield 事件。
+        # 结束哨兵 `QueueCompleteSentinel` 表示后台生产者已经写完。
         cancelled = False
         try:
             while True:
@@ -744,6 +793,8 @@ class RunResultStreaming(RunResultBase):
                     self._check_errors()
                     break
 
+                # 这里 yield 的不是纯文本 token，而是 SDK 定义的语义事件，
+                # 例如原始 Responses 事件、RunItem 事件、Agent 切换事件。
                 yield item
                 self._event_queue.task_done()
         finally:
@@ -791,6 +842,8 @@ class RunResultStreaming(RunResultBase):
         )
 
     def _check_errors(self):
+        # 流式模式的异常可能发生在后台 task 或 guardrail task 中，
+        # 所以每次取事件前后都要集中检查并缓存到 `_stored_exception`。
         if (
             self.max_turns is not None
             and self.current_turn > self.max_turns
@@ -837,6 +890,8 @@ class RunResultStreaming(RunResultBase):
                     self._stored_exception = out_guard_exc
 
     def _cleanup_tasks(self):
+        # 停止流式运行时，需要取消后台 run_loop、输入 guardrail、输出 guardrail。
+        # 这些 task 可能仍在等待模型、工具或异步队列。
         if self.run_loop_task and not self.run_loop_task.done():
             self.run_loop_task.cancel()
 
@@ -913,6 +968,8 @@ class RunResultStreaming(RunResultBase):
                     pass
             ```
         """
+        # 流式模式也支持转成 RunState。常见场景是：流式输出到一半遇到工具审批，
+        # 前端显示“是否允许执行”，用户确认后再用这个 state 继续跑。
         # Create a RunState from the current result
         # Use _original_input (updated on handoffs/resume when input history changes).
         # This avoids serializing a mutated view of input history.

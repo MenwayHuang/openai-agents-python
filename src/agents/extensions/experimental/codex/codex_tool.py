@@ -57,6 +57,9 @@ from .thread import Input, Thread, UserInput
 from .thread_options import SandboxMode, ThreadOptions, coerce_thread_options
 from .turn_options import TurnOptions, coerce_turn_options
 
+# 学习提示：codex_tool 把 Codex CLI 的代码执行/编辑能力包装成 FunctionTool。
+# 这类工具风险较高，重点要看输入 schema、审批、输出截断、trace 脱敏和错误处理。
+
 JSON_PRIMITIVE_TYPES = {"string", "number", "integer", "boolean"}
 SPAN_TRIM_KEYS = (
     "arguments",

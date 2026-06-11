@@ -1,3 +1,12 @@
+"""模型调用重试策略。
+
+中文学习说明：
+- 这里是 Runner-managed retry 的配置和策略层，不是 HTTP client 自己的重试。
+- 重试必须考虑“请求是否已经被服务端执行”：对带 previous_response_id/conversation_id 的状态请求，
+  盲目重放可能导致重复执行工具或污染会话。
+- 对 PPT Agent 来说，生成任务较长，建议未来也设计明确的重试策略和幂等边界。
+"""
+
 from __future__ import annotations
 
 import dataclasses
@@ -15,6 +24,7 @@ from .util._types import MaybeAwaitable
 @pydantic_dataclass
 class ModelRetryBackoffSettings:
     """Backoff configuration for runner-managed model retries."""
+    # Pydantic dataclass + Field(ge=0) 会校验延迟不能为负数。
 
     initial_delay: float | None = Field(default=None, ge=0)
     """Delay in seconds before the first retry attempt."""
@@ -49,6 +59,7 @@ _UNSET: Any = object()
 @dataclass(init=False)
 class ModelRetryNormalizedError:
     """Normalized error facts exposed to retry policies."""
+    # 把不同 provider/transport 的异常抽象成统一事实，策略函数只看这些字段即可。
 
     status_code: int | None = None
     error_code: str | None = None
@@ -70,6 +81,7 @@ class ModelRetryNormalizedError:
         is_network_error: bool = _UNSET,
         is_timeout: bool = _UNSET,
     ) -> None:
+        # 自定义 __init__ 记录哪些字段是显式传入的，便于后续合并/覆盖错误事实。
         explicit_fields: set[str] = set()
 
         def assign(name: str, value: Any, default: Any) -> Any:
@@ -114,6 +126,7 @@ class ModelRetryAdviceRequest:
 @dataclass
 class RetryDecision:
     """Explicit retry decision returned by retry policies."""
+    # _hard_veto 表示强制不重试，_approves_replay 表示策略明确认为重放安全。
 
     retry: bool
     delay: float | None = None
@@ -145,6 +158,7 @@ def _mark_retry_capabilities(
     retries_safe_transport_errors: bool,
     retries_all_transient_errors: bool,
 ) -> RetryPolicy:
+    # 给策略函数挂私有属性，标记它能处理哪类错误。这是 Python 函数对象可挂属性的用法。
     setattr(policy, _RETRIES_SAFE_TRANSPORT_ERRORS_ATTR, retries_safe_transport_errors)  # noqa: B010
     setattr(policy, _RETRIES_ALL_TRANSIENT_ERRORS_ATTR, retries_all_transient_errors)  # noqa: B010
     return policy

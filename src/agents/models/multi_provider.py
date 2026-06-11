@@ -1,3 +1,11 @@
+"""多 Provider 模型路由。
+
+中文学习说明：
+- `MultiProvider` 根据模型名前缀选择 provider，例如 `openai/...`、`litellm/...`、`any-llm/...`。
+- 没有前缀时默认走 OpenAIProvider。
+- 对 PPT Agent 来说，如果后续要同时支持 OpenAI、国产模型、本地模型，可以学习这种前缀路由设计。
+"""
+
 from __future__ import annotations
 
 from typing import Literal, cast
@@ -16,6 +24,7 @@ MultiProviderUnknownPrefixMode = Literal["error", "model_id"]
 
 class MultiProviderMap:
     """A map of model name prefixes to ModelProviders."""
+    # 简单的 prefix -> provider 注册表。
 
     def __init__(self):
         self._mapping: dict[str, ModelProvider] = {}
@@ -71,6 +80,7 @@ class MultiProvider(ModelProvider):
     ``openai/gpt-4.1`` to the configured OpenAI-compatible endpoint." The prefix mode options let
     callers opt into the second behavior without breaking the historical alias semantics.
     """
+    # ModelProvider 的实现：把字符串模型名解析到具体底层 provider。
 
     def __init__(
         self,
@@ -147,6 +157,7 @@ class MultiProvider(ModelProvider):
         self._fallback_providers: dict[str, ModelProvider] = {}
 
     def _get_prefix_and_model_name(self, model_name: str | None) -> tuple[str | None, str | None]:
+        # 约定用 `prefix/model_name` 表达模型来源。
         if model_name is None:
             return None, None
         elif "/" in model_name:

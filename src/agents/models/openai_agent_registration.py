@@ -20,10 +20,15 @@ class ResolvedOpenAIAgentRegistrationConfig:
 
 _default_agent_registration: OpenAIAgentRegistrationConfig | None = None
 
+# 学习提示：这个文件处理 OpenAI 内部/平台侧的 agent harness 标识。
+# 对 PPT Agent 主链路不是核心，但它展示了 SDK 如何把“运行框架身份”
+# 写入 trace metadata，便于平台做归因或观测。
+
 
 def set_default_openai_agent_registration_config(
     config: OpenAIAgentRegistrationConfig | None,
 ) -> None:
+    # 设置进程级默认注册配置；frozen dataclass 保证配置对象不可变。
     global _default_agent_registration
     _default_agent_registration = config
 
@@ -35,6 +40,7 @@ def get_default_openai_agent_registration_config() -> OpenAIAgentRegistrationCon
 def resolve_openai_agent_registration_config(
     config: OpenAIAgentRegistrationConfig | None,
 ) -> ResolvedOpenAIAgentRegistrationConfig | None:
+    # 优先级：显式参数 > 默认配置 > 环境变量。
     default = get_default_openai_agent_registration_config()
     harness_id = _resolve_str(
         explicit=config.harness_id if config else None,
@@ -60,6 +66,7 @@ def add_openai_harness_id_to_metadata(
     *,
     model_provider: Any,
 ) -> dict[str, Any] | None:
+    # 不覆盖用户已显式传入的 metadata 字段，避免偷偷改调用方语义。
     harness_id = resolve_openai_harness_id_for_model_provider(model_provider)
     if harness_id is None:
         return metadata
@@ -72,6 +79,7 @@ def add_openai_harness_id_to_metadata(
 
 
 def _harness_id_from_model_provider(model_provider: Any) -> str | None:
+    # 兼容不同 Provider 包装层：可能直接有 agent_registration，也可能藏在 openai_provider 里。
     registration = getattr(model_provider, "agent_registration", None)
     harness_id = _harness_id_from_registration(registration)
     if harness_id is not None:

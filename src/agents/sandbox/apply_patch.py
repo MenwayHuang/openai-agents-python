@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+# 学习提示：这个文件把 apply_patch 能力接到 sandbox workspace。
+# 它会校验路径、读取文件、应用 diff、写回文件，避免模型直接拿任意路径做危险写入。
+
 import io
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal, Protocol, cast, runtime_checkable
@@ -22,6 +25,8 @@ if TYPE_CHECKING:
 
 @runtime_checkable
 class PatchFormat(Protocol):
+    """补丁格式协议；只要实现 apply_diff 静态方法，就可作为 patch format。"""
+
     @staticmethod
     def apply_diff(input: str, diff: str, mode: ApplyDiffMode = "default") -> str: ...
 
@@ -33,6 +38,8 @@ class V4AFormat:
 
 
 class WorkspaceEditor:
+    """面向 sandbox session 的文件编辑器，供 apply_patch 工具调用。"""
+
     def __init__(
         self,
         session: BaseSandboxSession,
@@ -50,6 +57,7 @@ class WorkspaceEditor:
         *,
         patch_format: PatchFormat | Literal["v4a"] = "v4a",
     ) -> str:
+        # 支持单个 operation、dict 或 operation 列表，入口先统一成 ApplyPatchOperation。
         format_impl = _resolve_patch_format(patch_format)
         for operation in _coerce_operations(operations):
             await self.apply_operation(operation, patch_format=format_impl)
@@ -61,6 +69,7 @@ class WorkspaceEditor:
         *,
         patch_format: PatchFormat | Literal["v4a"] = "v4a",
     ) -> ApplyPatchResult:
+        # 所有写入都先通过 _validate_path 和 session.normalize_path 归一化到 sandbox 内。
         format_impl = _resolve_patch_format(patch_format)
         relative_path = self._validate_path(operation.path)
         destination = self._session.normalize_path(relative_path)
@@ -121,6 +130,7 @@ class WorkspaceEditor:
         )
 
     def _validate_path(self, path: str | Path) -> Path:
+        # 路径必须通过 workspace policy 校验，防止 .. 或绝对路径越界。
         if isinstance(path, str):
             if not path.strip():
                 raise ApplyPatchPathError(path=path, reason="empty")

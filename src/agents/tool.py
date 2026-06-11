@@ -1,5 +1,12 @@
 from __future__ import annotations
 
+# 中文学习注释：
+# 这个文件定义 Agent 能使用的所有“工具”形态。
+# 最重要的是 FunctionTool 和 @function_tool：它们把 Python 函数包装成模型可见的工具。
+# 还包括 OpenAI Hosted tools（web_search/file_search/code_interpreter/image_generation）、
+# computer/shell/apply_patch/MCP/custom tool 等高级能力。
+# 自研 agent-service 初期重点读 FunctionTool、function_tool、invoke_function_tool 这几段即可。
+
 import ast
 import asyncio
 import copy
@@ -64,15 +71,20 @@ from .util._tool_errors import get_trace_tool_error
 from .util._types import MaybeAwaitable
 
 if TYPE_CHECKING:
+    # TYPE_CHECKING 下的导入只服务类型检查，不参与运行时，主要用来避免循环依赖。
     from .agent import Agent, AgentBase
     from .items import RunItem, ToolApprovalItem
 
 
 ToolParams = ParamSpec("ToolParams")
+# ParamSpec 用来表达“函数参数列表本身”的类型。
+# 这里是为了让 @function_tool 装饰器尽量保留原函数的参数提示。
 
 ToolFunctionWithoutContext = Callable[ToolParams, Any]
 ToolFunctionWithContext = Callable[Concatenate[RunContextWrapper[Any], ToolParams], Any]
 ToolFunctionWithToolContext = Callable[Concatenate[ToolContext, ToolParams], Any]
+# Concatenate 表示在原函数参数前面拼一个 context 参数。
+# 所以工具函数既可以写成 func(x)，也可以写成 func(ctx, x)。
 
 ToolFunction = (
     ToolFunctionWithoutContext[ToolParams]
@@ -91,6 +103,7 @@ _UNSET_FAILURE_ERROR_FUNCTION = object()
 
 class ToolOutputText(BaseModel):
     """Represents a tool output that should be sent to the model as text."""
+    # BaseModel 是 Pydantic 的数据模型。它负责校验字段并支持 JSON 序列化。
 
     type: Literal["text"] = "text"
     text: str
@@ -118,6 +131,8 @@ class ToolOutputImage(BaseModel):
     @model_validator(mode="after")
     def check_at_least_one_required_field(self) -> ToolOutputImage:
         """Validate that at least one of image_url or file_id is provided."""
+        # @model_validator(mode="after") 是 Pydantic v2 写法：
+        # 字段基础校验完成后，再做跨字段校验。
         if self.image_url is None and self.file_id is None:
             raise ValueError("At least one of image_url or file_id must be provided")
         return self
@@ -167,10 +182,14 @@ ValidToolOutputPydanticModels = ToolOutputText | ToolOutputImage | ToolOutputFil
 ValidToolOutputPydanticModelsTypeAdapter: TypeAdapter[ValidToolOutputPydanticModels] = TypeAdapter(
     ValidToolOutputPydanticModels
 )
+# TypeAdapter 可以在没有显式 BaseModel 类时，对联合类型做校验和序列化。
+# 这里用于把工具返回值标准化成 text/image/file 等模型可消费格式。
 
 
 class ToolOriginType(str, Enum):
     """Enumerates the runtime source of a function-tool-backed run item."""
+    # 记录工具调用来源：普通函数、MCP 工具、还是 agent-as-tool。
+    # 这对 trace、恢复运行、调试工具调用链路很重要。
 
     FUNCTION = "function"
     MCP = "mcp"
@@ -180,6 +199,7 @@ class ToolOriginType(str, Enum):
 @dataclass(frozen=True)
 class ToolOrigin:
     """Serializable metadata describing where a function-tool-backed item came from."""
+    # frozen=True 表示 dataclass 实例创建后字段不可变，更适合作为元数据值对象。
 
     type: ToolOriginType
     mcp_server_name: str | None = None
@@ -232,6 +252,8 @@ ComputerT_contra = TypeVar("ComputerT_contra", bound=ComputerLike, contravariant
 
 class ComputerCreate(Protocol[ComputerT_co]):
     """Initializes a computer for the current run context."""
+    # Protocol 是“结构化接口”：不要求继承，只要对象有同样的 __call__ 签名即可。
+    # 类似 Go 里“实现了方法集合就实现接口”的味道。
 
     def __call__(self, *, run_context: RunContextWrapper[Any]) -> MaybeAwaitable[ComputerT_co]: ...
 
@@ -260,6 +282,8 @@ ComputerConfig = ComputerLike | ComputerCreate[Any] | ComputerProvider[Any]
 
 @dataclass
 class FunctionToolResult:
+    # FunctionToolResult 是一次工具执行后的内部结果对象，
+    # Runner 会用它决定是否继续让 LLM 总结、是否中断等待审批、是否记录 trace。
     tool: FunctionTool
     """The tool that was run."""
 
@@ -284,6 +308,11 @@ class FunctionTool:
     """A tool that wraps a function. In most cases, you should use  the `function_tool` helpers to
     create a FunctionTool, as they let you easily wrap a Python function.
     """
+    # FunctionTool 是工具系统的核心抽象：
+    # 1. params_json_schema 给模型看；
+    # 2. on_invoke_tool 真正执行 Python 代码；
+    # 3. guardrails/approval/timeout 控制工具执行边界；
+    # 4. origin/namespace 帮助 trace、恢复和 Responses API 组织工具。
 
     name: str
     """The name of the tool, as shown to the LLM. Generally the name of the function."""
@@ -319,6 +348,8 @@ class FunctionTool:
     # Keep guardrail fields before needs_approval to preserve v0.7.0 positional
     # constructor compatibility for public FunctionTool callers.
     # Tool-specific guardrails.
+    # 这里保留字段顺序是为了兼容老版本按位置参数构造 FunctionTool 的用户代码。
+    # 公共 SDK 升级时很重视这种兼容性；自研系统也要注意数据结构变更的迁移成本。
     tool_input_guardrails: list[ToolInputGuardrail[Any]] | None = None
     """Optional list of input guardrails to run before invoking this tool."""
 
@@ -397,6 +428,10 @@ class FunctionTool:
         )
 
     def __post_init__(self):
+        # 初始化后自动执行：
+        # 1. 绑定错误处理器到当前 FunctionTool 实例；
+        # 2. 把参数 schema 转成 strict；
+        # 3. 校验 timeout 配置。
         bind_to_function_tool = getattr(self.on_invoke_tool, "__agents_bind_function_tool__", None)
         if callable(bind_to_function_tool):
             self.on_invoke_tool = bind_to_function_tool(self)
@@ -407,6 +442,8 @@ class FunctionTool:
         _validate_function_tool_timeout_config(self)
 
     def __copy__(self) -> FunctionTool:
+        # FunctionTool 会被 namespace 等逻辑 copy。
+        # dataclasses.replace 只复制 init 字段，这里补上 init=False 和动态属性，保证元数据不丢。
         copied_tool = dataclasses.replace(self)
         dataclass_field_names = {tool_field.name for tool_field in dataclasses.fields(FunctionTool)}
         for tool_field in dataclasses.fields(FunctionTool):
@@ -421,6 +458,8 @@ class FunctionTool:
 
 class _FailureHandlingFunctionToolInvoker:
     """Internal callable that rebinds wrapper error handling for copied FunctionTools."""
+    # 这是一个“可调用对象”：实现 __call__ 后，实例可以像函数一样被调用。
+    # 它额外保存 function_tool 引用，解决工具被 copy 后错误处理仍指向旧实例的问题。
 
     def __init__(
         self,
@@ -436,6 +475,7 @@ class _FailureHandlingFunctionToolInvoker:
     def __agents_bind_function_tool__(
         self, function_tool: FunctionTool
     ) -> _FailureHandlingFunctionToolInvoker:
+        # SDK 自定义的内部绑定协议：FunctionTool.__post_init__ 会找这个方法重新绑定自身。
         if self._function_tool is function_tool:
             return self
         bound_invoker = _FailureHandlingFunctionToolInvoker(
@@ -448,6 +488,8 @@ class _FailureHandlingFunctionToolInvoker:
         return bound_invoker
 
     async def __call__(self, ctx: ToolContext[Any], input: str) -> Any:
+        # 真正执行工具时会进入这里。异常如果能被 failure_error_function 转成字符串，
+        # 就作为工具结果返回给模型；否则继续抛出，让整个 run 失败。
         try:
             return await self._invoke_tool_impl(ctx, input)
         except Exception as e:
@@ -469,6 +511,7 @@ def with_function_tool_failure_error_handler(
     on_handled_error: Callable[[FunctionTool, Exception, str], None],
 ) -> Callable[[ToolContext[Any], str], Awaitable[Any]]:
     """Wrap a tool invoker so copied FunctionTools resolve failure policy against themselves."""
+    # 外部辅助入口：把工具调用函数包一层统一错误处理。
 
     def _on_handled_error_with_context(
         function_tool: FunctionTool,
@@ -516,6 +559,8 @@ def _build_wrapped_function_tool(
     tool_origin: ToolOrigin | None = None,
 ) -> FunctionTool:
     """Create a FunctionTool with copied-tool-aware failure handling bound in one place."""
+    # FunctionTool 的统一工厂函数。
+    # @function_tool、agent.as_tool、MCP 工具转换等路径最终都希望得到类似的错误处理能力。
     on_invoke_tool = _with_context_function_tool_failure_error_handler(
         invoke_tool_impl,
         on_handled_error,
@@ -547,6 +592,7 @@ def _build_wrapped_function_tool(
 
 def get_function_tool_origin(function_tool: FunctionTool) -> ToolOrigin | None:
     """Return scalar origin metadata for a function tool."""
+    # trace/run item 里会用 origin 标记这次调用来自普通函数、MCP，还是嵌套 Agent。
     if not function_tool._emit_tool_origin:
         return None
     return function_tool._tool_origin or ToolOrigin(type=ToolOriginType.FUNCTION)
@@ -557,6 +603,7 @@ class FileSearchTool:
     """A hosted tool that lets the LLM search through a vector store. Currently only supported with
     OpenAI models, using the Responses API.
     """
+    # Hosted tool 表示工具执行不在你的 Python 进程里，而是由 OpenAI Responses API 托管。
 
     vector_store_ids: list[str]
     """The IDs of the vector stores to search."""
@@ -583,6 +630,7 @@ class WebSearchTool:
     """A hosted tool that lets the LLM search the web. Currently only supported with OpenAI models,
     using the Responses API.
     """
+    # WebSearchTool 同样是 hosted tool：Runner 只把配置传给模型后端，不本地执行搜索逻辑。
 
     user_location: UserLocation | None = None
     """Optional location for the search. Lets you customize results to be relevant to a location."""
@@ -608,6 +656,8 @@ class WebSearchTool:
 @dataclass(eq=False)
 class ComputerTool(Generic[ComputerT]):
     """A local computer harness exposed through the Responses API computer tool."""
+    # ComputerTool 用于让模型操作计算机/浏览器等环境，是比较高级的执行型工具。
+    # eq=False 让对象保持基于身份的比较，便于 WeakKeyDictionary 按实例做缓存。
 
     computer: ComputerT | ComputerCreate[ComputerT] | ComputerProvider[ComputerT]
     """The computer implementation, or a factory that produces a computer per run."""
@@ -653,6 +703,8 @@ async def resolve_computer(
     *, tool: ComputerTool[Any], run_context: RunContextWrapper[Any]
 ) -> ComputerLike:
     """Resolve a computer for a given run context, initializing it if needed."""
+    # Computer 可以是现成实例，也可以是工厂函数或 provider。
+    # 这里把这些配置统一解析成当前 run_context 对应的 Computer 实例，并缓存起来。
     per_context = _computer_cache.get(tool)
     if per_context is None:
         per_context = weakref.WeakKeyDictionary()
@@ -703,6 +755,7 @@ async def resolve_computer(
 
 async def dispose_resolved_computers(*, run_context: RunContextWrapper[Any]) -> None:
     """Dispose any computer instances created for the provided run context."""
+    # run 结束后释放由 provider 创建的 computer 资源，避免浏览器/进程/连接泄露。
     resolved_by_tool = _computers_by_run_context.pop(run_context, None)
     if not resolved_by_tool:
         return
@@ -868,6 +921,7 @@ class HostedMCPTool:
 @dataclass
 class CodeInterpreterTool:
     """A tool that allows the LLM to execute code in a sandboxed environment."""
+    # 代码解释器是 OpenAI 托管执行环境，不是本地 Python eval。
 
     tool_config: CodeInterpreter
     """The tool config, which includes the container and other settings."""
@@ -880,6 +934,7 @@ class CodeInterpreterTool:
 @dataclass
 class ImageGenerationTool:
     """A tool that allows the LLM to generate images."""
+    # 图片生成工具也是 hosted tool：只传配置，实际生成由模型服务处理。
 
     tool_config: ImageGeneration
     """The tool config, which includes image generation settings."""
@@ -911,6 +966,7 @@ class LocalShellTool:
     For more details, see:
     https://platform.openai.com/docs/guides/tools-local-shell
     """
+    # LocalShellTool 是旧形态的本地 shell 工具，后面 ShellTool 是新一代结构。
 
     executor: LocalShellExecutor
     """A function that executes a command on a shell."""
@@ -1103,6 +1159,8 @@ def _normalize_shell_tool_environment(
 @dataclass
 class ShellTool:
     """Next-generation shell tool. LocalShellTool will be deprecated in favor of this."""
+    # ShellTool 同时支持 local 和 hosted container 两类执行环境。
+    # 本地模式必须传 executor；托管模式由 OpenAI 后端管理容器，不允许本地 executor。
 
     executor: ShellExecutor | None = None
     name: str = "shell"
@@ -1125,6 +1183,7 @@ class ShellTool:
 
     def __post_init__(self) -> None:
         """Validate shell tool configuration and normalize environment fields."""
+        # 初始化时把 environment 规范化，避免后续分支反复处理 None/缺省 type。
         normalized_environment = _normalize_shell_tool_environment(self.environment)
         self.environment = normalized_environment
 
@@ -1151,6 +1210,8 @@ class ShellTool:
 @dataclass
 class ApplyPatchTool:
     """Hosted apply_patch tool. Lets the model request file mutations via unified diffs."""
+    # apply_patch 工具用于让模型产出补丁请求。
+    # 在真正工程里一定要配合审批、权限和路径边界，避免模型随意改文件。
 
     editor: ApplyPatchEditor
     name: str = "apply_patch"
@@ -1174,6 +1235,8 @@ class ApplyPatchTool:
 @dataclass
 class CustomTool:
     """A Responses custom tool that uses one raw string input instead of JSON arguments."""
+    # CustomTool 不使用 JSON 参数 schema，而是让模型传一段原始字符串。
+    # 适合搜索语句、DSL、代码片段等“天然是一段文本”的工具输入。
 
     name: str
     description: str
@@ -1188,6 +1251,7 @@ class CustomTool:
     tool_config: CustomToolParam = field(init=False, repr=False)
 
     def __post_init__(self) -> None:
+        # tool_config 是最终传给 Responses API 的 hosted custom tool 配置。
         tool_config: CustomToolParam = {
             "type": "custom",
             "name": self.name,
@@ -1219,6 +1283,7 @@ class ToolSearchTool:
     `execution="client"` is supported for manual Responses orchestration, but the standard
     OpenAI Agents runner does not auto-execute client tool search calls.
     """
+    # ToolSearchTool 用于 deferred tools：工具很多时先暴露搜索入口，再按需加载工具定义。
 
     description: str | None = None
     execution: Literal["server", "client"] | None = None
@@ -1244,6 +1309,8 @@ Tool = (
     | ToolSearchTool
 )
 """A tool that can be used in an agent."""
+# Python 3.10+ 的 | 可以表达联合类型。
+# 这里 Tool 不是基类，而是一组 dataclass/类型的 Union；运行时通常用 isinstance 分派。
 
 
 def tool_namespace(
@@ -1253,6 +1320,8 @@ def tool_namespace(
     tools: list[FunctionTool],
 ) -> list[FunctionTool]:
     """Attach namespace metadata to function tools for OpenAI Responses tool search."""
+    # namespace 可以把一组 FunctionTool 归类，配合 Responses 的 tool search/defer loading 使用。
+    # 注意这里 copy tool，而不是原地修改，减少对调用方原工具对象的副作用。
     if not isinstance(name, str) or not name.strip():
         raise UserError("tool_namespace() requires a non-empty namespace name.")
     if not isinstance(description, str) or not description.strip():
@@ -1274,6 +1343,7 @@ def tool_namespace(
 
 def get_function_tool_responses_only_features(tool: FunctionTool) -> tuple[str, ...]:
     """Return Responses-only features used by a function tool."""
+    # 有些能力只在 OpenAI Responses API 支持，Chat Completions 等后端不能用。
     features: list[str] = []
     if get_explicit_function_tool_namespace(tool) is not None:
         features.append("tool_namespace()")
@@ -1288,6 +1358,7 @@ def ensure_function_tool_supports_responses_only_features(
     backend_name: str,
 ) -> None:
     """Reject Responses-only function-tool features on unsupported backends."""
+    # 模型后端转换前做显式报错，避免把不支持的字段传到 API 后才得到难懂错误。
     unsupported_features = get_function_tool_responses_only_features(tool)
     if not unsupported_features:
         return
@@ -1311,6 +1382,7 @@ def ensure_tool_choice_supports_backend(
 
 def is_responses_tool_search_surface(tool: Tool) -> bool:
     """Return True when a tool can be exposed through hosted Responses tool search."""
+    # 判断该工具是否属于 Responses API 的 deferred/tool-search 暴露面。
     if isinstance(tool, FunctionTool):
         return tool.defer_loading or get_explicit_function_tool_namespace(tool) is not None
     if isinstance(tool, HostedMCPTool):
@@ -1320,11 +1392,13 @@ def is_responses_tool_search_surface(tool: Tool) -> bool:
 
 def has_responses_tool_search_surface(tools: list[Tool]) -> bool:
     """Return True when tool search has at least one eligible searchable surface."""
+    # 只要工具列表中存在可搜索/延迟加载的 surface，就说明 ToolSearchTool 有意义。
     return any(is_responses_tool_search_surface(tool) for tool in tools)
 
 
 def is_required_tool_search_surface(tool: Tool) -> bool:
     """Return True when a tool requires ToolSearchTool() to stay reachable."""
+    # defer_loading=True 的工具如果没有 ToolSearchTool，模型就永远看不到它。
     if isinstance(tool, FunctionTool):
         return tool.defer_loading
     if isinstance(tool, HostedMCPTool):
@@ -1343,6 +1417,10 @@ def validate_responses_tool_search_configuration(
     allow_opaque_search_surface: bool = False,
 ) -> None:
     """Validate the Responses-only tool_search and defer-loading contract."""
+    # Responses 的工具搜索配置有几条硬约束：
+    # 1. ToolSearchTool 最多一个；
+    # 2. deferred tool 必须搭配 ToolSearchTool；
+    # 3. 不能只有 ToolSearchTool 却没有任何可搜索工具面。
     tool_search_tools = [tool for tool in tools if isinstance(tool, ToolSearchTool)]
     tool_search_count = len(tool_search_tools)
     has_tool_search = tool_search_count > 0
@@ -1373,10 +1451,14 @@ def prune_orphaned_tool_search_tools(tools: list[Tool]) -> list[Tool]:
     only known during request conversion, so pruning here hides misconfiguration instead of
     surfacing a clear error.
     """
+    # 这里暂时不裁剪孤立 ToolSearchTool，因为有些 prompt-managed tool surface
+    # 只有在请求转换阶段才能知道。过早删除会掩盖真实配置错误。
     return tools
 
 
 def _extract_json_decode_error(error: BaseException) -> json.JSONDecodeError | None:
+    # Python 异常可能通过 __cause__/__context__ 串起来。
+    # 这里沿着异常链往里找真正的 JSONDecodeError，便于返回更准确的工具参数错误。
     current: BaseException | None = error
     while current is not None:
         if isinstance(current, json.JSONDecodeError):
@@ -1402,6 +1484,8 @@ def _build_handled_function_tool_error_handler(
     include_tool_name_in_log_messages: bool = True,
 ) -> Callable[[FunctionTool, Exception, str, ToolContext[Any]], None]:
     """Create a consistent handled-error reporter for wrapped FunctionTools."""
+    # 工具异常被“转成模型可见错误文本”时，不代表完全忽略。
+    # 这里仍会写 trace 和日志，方便开发者定位问题。
 
     def _on_handled_error(
         function_tool: FunctionTool,
@@ -1451,6 +1535,8 @@ def _build_handled_function_tool_error_handler(
 
 def _parse_function_tool_json_input(*, tool_name: str, input_json: str) -> dict[str, Any]:
     """Decode raw tool arguments with consistent diagnostics."""
+    # 模型传来的 tool arguments 在 OpenAI 协议中通常是 JSON 字符串。
+    # 这里统一解析为 dict，并处理敏感数据日志开关。
     json_decode_error: Exception | None = None
     try:
         parsed = json.loads(input_json) if input_json else {}
@@ -1477,6 +1563,7 @@ def _parse_function_tool_json_input(*, tool_name: str, input_json: str) -> dict[
 
 def _log_function_tool_invocation(*, tool_name: str, input_json: str) -> None:
     """Log the start of a tool invocation with the current redaction policy."""
+    # DONT_LOG_TOOL_DATA 用于避免把用户输入、密钥或敏感参数写入日志。
     if _debug.DONT_LOG_TOOL_DATA:
         logger.debug(f"Invoking tool {tool_name}")
     else:
@@ -1485,6 +1572,8 @@ def _log_function_tool_invocation(*, tool_name: str, input_json: str) -> None:
 
 def default_tool_error_function(ctx: RunContextWrapper[Any], error: Exception) -> str:
     """The default tool error function, which just returns a generic error message."""
+    # 默认策略是把错误变成一段模型可见文本，让模型有机会修正参数或换个做法。
+    # 如果希望工具异常直接让 run 失败，可以给 failure_error_function=None。
     json_decode_error = _extract_tool_argument_json_error(error)
     if json_decode_error is not None:
         return (
@@ -1511,6 +1600,8 @@ def set_function_tool_failure_error_function(
     failure_error_function: ToolErrorFunction | None | object = _UNSET_FAILURE_ERROR_FUNCTION,
 ) -> FunctionTool:
     """Store internal failure formatter config for tool wrappers and runtime fallbacks."""
+    # _UNSET_FAILURE_ERROR_FUNCTION 用来区分“调用方没传”和“调用方明确传 None”。
+    # 没传表示用默认错误文本；传 None 表示不要吞异常，直接抛出。
     function_tool._use_default_failure_error_function = (
         failure_error_function is _UNSET_FAILURE_ERROR_FUNCTION
     )
@@ -1533,6 +1624,8 @@ def resolve_function_tool_failure_error_function(
 
 class _FunctionToolCancelledError(Exception):
     """Adapter that preserves the public ToolErrorFunction Exception contract on cancellation."""
+    # asyncio.CancelledError 继承自 BaseException，不是普通 Exception。
+    # SDK 对外的 ToolErrorFunction 只承诺接收 Exception，所以这里包一层适配。
 
     cancelled_error: asyncio.CancelledError
 
@@ -1558,6 +1651,8 @@ async def maybe_invoke_function_tool_failure_error_function(
     error: BaseException,
 ) -> str | None:
     """Invoke the configured failure formatter, if one exists."""
+    # 返回 None 表示没有配置错误格式化函数，调用方应继续抛异常。
+    # 返回 str 表示把这个字符串作为工具结果交还给模型。
     failure_error_function = resolve_function_tool_failure_error_function(function_tool)
     if failure_error_function is None:
         return None
@@ -1571,6 +1666,7 @@ async def maybe_invoke_function_tool_failure_error_function(
 
 def _annotation_expr_name(expr: ast.expr) -> str | None:
     """Return the unqualified type name for a string annotation expression node."""
+    # ast 用来解析字符串形式的类型注解，例如 "ToolContext | None"。
     if isinstance(expr, ast.Name):
         return expr.id
     if isinstance(expr, ast.Attribute):
@@ -1622,6 +1718,8 @@ def _annotation_expr_mentions_context_type(expr: ast.expr, *, type_name: str) ->
 
 def _annotation_mentions_context_type(annotation: Any, *, context_type: type[Any]) -> bool:
     """Return True when an annotation structurally references the given context type."""
+    # 工具包装函数可能用字符串注解或 Annotated/Union。
+    # 这组 helper 的目的，是可靠判断第一个参数到底想要 ToolContext 还是 RunContextWrapper。
     if annotation is inspect.Signature.empty:
         return False
 
@@ -1657,6 +1755,8 @@ def _get_function_tool_invoke_context(
     metadata such as agents or run config into incompatible serializers. When the wrapper
     explicitly declares `RunContextWrapper`, preserve only the base context state.
     """
+    # ToolContext 是 RunContextWrapper 的增强版，里面有 tool_name、tool_call_id、run_config 等信息。
+    # 但第三方 wrapper 如果只声明 RunContextWrapper，就只传基础上下文，避免把额外运行时字段泄露出去。
     try:
         parameters = tuple(inspect.signature(function_tool.on_invoke_tool).parameters.values())
     except (TypeError, ValueError):
@@ -1687,6 +1787,8 @@ async def invoke_function_tool(
     arguments: str,
 ) -> Any:
     """Invoke a function tool, enforcing timeout configuration when provided."""
+    # 这是 Runner 执行 FunctionTool 的统一入口。
+    # 它会处理 context 选择、timeout、超时后返回错误文本或抛异常。
     invoke_context = _get_function_tool_invoke_context(function_tool, context)
     timeout_seconds = function_tool.timeout_seconds
     if timeout_seconds is None:
@@ -1696,6 +1798,7 @@ async def invoke_function_tool(
         function_tool.on_invoke_tool(cast(Any, invoke_context), arguments)
     )
     try:
+        # wait_for 会在超时时取消任务；下面的 except 分支决定如何把超时反馈给模型/调用方。
         return await asyncio.wait_for(tool_task, timeout=timeout_seconds)
     except asyncio.TimeoutError as exc:
         if tool_task.done() and not tool_task.cancelled():
@@ -1745,6 +1848,8 @@ def function_tool(
     defer_loading: bool = False,
 ) -> FunctionTool:
     """Overload for usage as @function_tool (no parentheses)."""
+    # @overload 只服务类型检查，不影响运行时。
+    # 这里告诉 IDE：@function_tool 和 @function_tool(...) 两种用法返回类型不同。
     ...
 
 
@@ -1835,8 +1940,20 @@ def function_tool(
         defer_loading: Whether to hide this tool definition until Responses API tool search
             explicitly loads it.
     """
+    # 这个装饰器支持两种写法：
+    #   @function_tool
+    #   def foo(...): ...
+    #
+    #   @function_tool(name_override="bar")
+    #   def foo(...): ...
+    #
+    # 下面通过 func 是否为 callable 来区分这两种调用方式。
 
     def _create_function_tool(the_func: ToolFunction[...]) -> FunctionTool:
+        # 核心包装流程：
+        # 1. 生成函数 schema；
+        # 2. 定义 on_invoke_tool，把 JSON 参数校验并转成 Python args/kwargs；
+        # 3. 用统一工厂创建 FunctionTool。
         is_sync_function_tool = not inspect.iscoroutinefunction(the_func)
         schema = function_schema(
             func=the_func,
@@ -1848,12 +1965,15 @@ def function_tool(
         )
 
         async def _on_invoke_tool_impl(ctx: ToolContext[Any], input: str) -> Any:
+            # 工具真正被模型调用时会进入这里。
+            # input 是模型输出的 JSON 字符串，不是已经校验好的 Python dict。
             tool_name = ctx.tool_name
             json_data = _parse_function_tool_json_input(tool_name=tool_name, input_json=input)
             _log_function_tool_invocation(tool_name=tool_name, input_json=input)
 
             try:
                 parsed = (
+                    # 动态 Pydantic Model 在这里把 dict 校验成对象。
                     schema.params_pydantic_model(**json_data)
                     if json_data
                     else schema.params_pydantic_model()
@@ -1862,16 +1982,19 @@ def function_tool(
                 raise ModelBehaviorError(f"Invalid JSON input for tool {tool_name}: {e}") from e
 
             args, kwargs_dict = schema.to_call_args(parsed)
+            # schema.to_call_args 会根据原函数签名恢复 *args/**kwargs/keyword-only 等调用形式。
 
             if not _debug.DONT_LOG_TOOL_DATA:
                 logger.debug(f"Tool call args: {args}, kwargs: {kwargs_dict}")
 
             if not is_sync_function_tool:
+                # async 工具直接 await。
                 if schema.takes_context:
                     result = await the_func(ctx, *args, **kwargs_dict)
                 else:
                     result = await the_func(*args, **kwargs_dict)
             else:
+                # 同步工具放到线程池执行，避免阻塞当前 asyncio 事件循环。
                 if schema.takes_context:
                     result = await asyncio.to_thread(the_func, ctx, *args, **kwargs_dict)
                 else:
@@ -1910,10 +2033,12 @@ def function_tool(
 
     # If func is actually a callable, we were used as @function_tool with no parentheses
     if callable(func):
+        # 用法：@function_tool
         return _create_function_tool(func)
 
     # Otherwise, we were used as @function_tool(...), so return a decorator
     def decorator(real_func: ToolFunction[...]) -> FunctionTool:
+        # 用法：@function_tool(...)
         return _create_function_tool(real_func)
 
     return decorator
@@ -1935,6 +2060,8 @@ def _is_computer_provider(candidate: object) -> bool:
 
 
 def _validate_function_tool_timeout_config(tool: FunctionTool) -> None:
+    # timeout 只支持 async 工具。同步工具已经被 asyncio.to_thread 包装，
+    # 线程无法被安全强制杀掉，所以这里直接拒绝配置 timeout。
     timeout_seconds = tool.timeout_seconds
     if timeout_seconds is not None:
         if isinstance(timeout_seconds, bool) or not isinstance(timeout_seconds, int | float):

@@ -1,5 +1,11 @@
 from __future__ import annotations
 
+# 中文学习注释：
+# 这个文件把普通 JSON Schema 改造成 OpenAI Structured Outputs 支持的 strict schema。
+# strict schema 的核心思想是：对象字段必须明确、additionalProperties 通常为 False、
+# 所有 properties 都要进入 required，并递归处理 anyOf/allOf/$ref 等结构。
+# function_schema.py 和 agent_output.py 都会调用这里。
+
 import copy
 from typing import Any, TypeGuard
 
@@ -21,6 +27,7 @@ def ensure_strict_json_schema(
     """Mutates the given JSON schema to ensure it conforms to the `strict` standard
     that the OpenAI API expects.
     """
+    # 空 schema 在严格模式下变成“空对象”schema，而不是任意值。
     if schema == {}:
         return copy.deepcopy(_EMPTY_SCHEMA)
     return _ensure_strict_json_schema(schema, path=(), root=schema)
@@ -33,11 +40,13 @@ def _ensure_strict_json_schema(
     path: tuple[str, ...],
     root: dict[str, object],
 ) -> dict[str, Any]:
+    # 递归处理 schema。path 用于报错定位，root 用于解析 $ref。
     if not is_dict(json_schema):
         raise TypeError(f"Expected {json_schema} to be a dictionary; path={path}")
 
     defs = json_schema.get("$defs")
     if is_dict(defs):
+        # Pydantic v2 常用 $defs 存放可复用子 schema。
         for def_name, def_schema in defs.items():
             _ensure_strict_json_schema(def_schema, path=(*path, "$defs", def_name), root=root)
 
@@ -50,6 +59,7 @@ def _ensure_strict_json_schema(
 
     typ = json_schema.get("type")
     if typ == "object" and "additionalProperties" not in json_schema:
+        # strict object 默认不允许模型输出 schema 未声明的字段。
         json_schema["additionalProperties"] = False
     elif (
         typ == "object"
@@ -67,6 +77,8 @@ def _ensure_strict_json_schema(
     # { 'type': 'object', 'properties': { 'a':  {...} } }
     properties = json_schema.get("properties")
     if is_dict(properties):
+        # strict structured output 要求对象所有 properties 都列入 required。
+        # 可空字段通常用 type: ["string", "null"] 这类方式表达。
         json_schema["required"] = list(properties.keys())
         json_schema["properties"] = {
             key: _ensure_strict_json_schema(prop_schema, path=(*path, "properties", key), root=root)
@@ -92,6 +104,7 @@ def _ensure_strict_json_schema(
     # discriminated unions
     one_of = json_schema.get("oneOf")
     if is_list(one_of):
+        # OpenAI 嵌套 structured output 不支持 oneOf，这里转成 anyOf。
         existing_any_of = json_schema.get("anyOf", [])
         if not is_list(existing_any_of):
             existing_any_of = []
@@ -104,6 +117,7 @@ def _ensure_strict_json_schema(
     # intersections
     all_of = json_schema.get("allOf")
     if is_list(all_of):
+        # allOf 只有一个分支时可以直接展开，减少模型端 schema 复杂度。
         if len(all_of) == 1:
             json_schema.update(
                 _ensure_strict_json_schema(all_of[0], path=(*path, "allOf", "0"), root=root)
@@ -119,6 +133,7 @@ def _ensure_strict_json_schema(
     # the schema will still be `nullable` and the model will default
     # to using `None` anyway
     if json_schema.get("default", NOT_GIVEN) is None:
+        # default=None 对模型约束意义不大，且可能不被 strict schema 支持。
         json_schema.pop("default")
 
     # we can't use `$ref`s if there are also other properties defined, e.g.
@@ -128,6 +143,7 @@ def _ensure_strict_json_schema(
     # `{"type": "string", "description": "my description"}`
     ref = json_schema.get("$ref")
     if ref and has_more_than_n_keys(json_schema, 1):
+        # 带兄弟字段的 $ref 需要内联，否则 $ref 旁边的 description 等字段可能被忽略。
         assert isinstance(ref, str), f"Received non-string $ref - {ref}"
 
         resolved = resolve_ref(root=root, ref=ref)
@@ -150,6 +166,7 @@ def _ensure_strict_json_schema(
 
 
 def resolve_ref(*, root: dict[str, object], ref: str) -> object:
+    # 解析本地 JSON pointer，例如 #/$defs/User。
     if not ref.startswith("#/"):
         raise ValueError(f"Unexpected $ref format {ref!r}; Does not start with #/")
 
@@ -168,6 +185,7 @@ def resolve_ref(*, root: dict[str, object], ref: str) -> object:
 def is_dict(obj: object) -> TypeGuard[dict[str, object]]:
     # just pretend that we know there are only `str` keys
     # as that check is not worth the performance cost
+    # TypeGuard 告诉类型检查器：返回 True 后 obj 可视为 dict[str, object]。
     return isinstance(obj, dict)
 
 

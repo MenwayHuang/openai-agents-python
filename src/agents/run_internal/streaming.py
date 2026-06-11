@@ -1,3 +1,10 @@
+"""RunItem 到 StreamEvent 的转换辅助。
+
+中文学习说明：
+- run loop 每产生一批 RunItem，就通过这里转换成前端/调用方可消费的流式语义事件。
+- 审批占位和 compaction 这类内部记账 item 不会作为普通流式事件发出去。
+"""
+
 from __future__ import annotations
 
 import asyncio
@@ -30,6 +37,8 @@ def stream_step_items_to_queue(
     queue: asyncio.Queue[StreamEvent | QueueCompleteSentinel],
 ) -> None:
     """Emit run items as streaming events, skipping approval placeholders."""
+    # 这里是 RunItem -> RunItemStreamEvent.name 的映射表。
+    # 如果你做自己的 PPT Agent 流式 UI，也需要定义类似的业务事件名称。
     for item in new_step_items:
         if isinstance(item, MessageOutputItem):
             event = RunItemStreamEvent(item=item, name="message_output_created")

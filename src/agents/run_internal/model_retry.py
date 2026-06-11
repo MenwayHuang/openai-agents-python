@@ -43,6 +43,9 @@ DEFAULT_BACKOFF_JITTER = True
 COMPATIBILITY_CONVERSATION_LOCKED_RETRIES = 3
 _RETRY_SAFE_STREAM_EVENT_TYPES = frozenset({"response.created", "response.in_progress"})
 
+# 学习提示：这是 Runner 模型调用的重试执行器，比 Provider 自带重试更贴近 Agent 状态。
+# 它要同时考虑普通响应、流式响应、conversation lock、是否能 rewind、以及 usage 汇总。
+
 
 def _iter_error_chain(error: Exception) -> Iterator[Exception]:
     current: Exception | None = error

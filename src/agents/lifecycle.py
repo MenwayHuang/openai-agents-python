@@ -1,3 +1,11 @@
+"""Agent/Run 生命周期 hooks。
+
+中文学习说明：
+- Hooks 是扩展点，不改变 Runner 主流程，但能在关键时机插入日志、指标、审计、业务回调。
+- `RunHooksBase` 作用于一次 run 的全局事件；`AgentHooksBase` 作用于某个 agent 自己的事件。
+- 对 PPT Agent 来说，可以用 hooks 记录“开始规划、模型返回、工具开始/结束、handoff、最终输出”等执行轨迹。
+"""
+
 from typing import Any, Generic
 
 from typing_extensions import TypeVar
@@ -14,6 +22,7 @@ class RunHooksBase(Generic[TContext, TAgent]):
     """A class that receives callbacks on various lifecycle events in an agent run. Subclass and
     override the methods you need.
     """
+    # 全局 run hooks：不需要每个 Agent 单独配置，适合统一观测/审计。
 
     async def on_llm_start(
         self,
@@ -23,6 +32,7 @@ class RunHooksBase(Generic[TContext, TAgent]):
         input_items: list[TResponseInputItem],
     ) -> None:
         """Called just before invoking the LLM for this agent."""
+        # 模型调用前：可记录输入摘要、模型名、项目 ID，但生产环境要避免记录完整隐私内容。
         pass
 
     async def on_llm_end(
@@ -80,6 +90,7 @@ class RunHooksBase(Generic[TContext, TAgent]):
         and ``tool_arguments``. Other local tool families may provide a plain
         ``RunContextWrapper`` instead.
         """
+        # 工具调用前：可做业务日志、权限检查、耗时统计起点等。
         pass
 
     async def on_tool_end(
@@ -109,6 +120,7 @@ class AgentHooksBase(Generic[TContext, TAgent]):
 
     Subclass and override the methods you need.
     """
+    # Agent 级 hooks：只在绑定的 agent 上触发，适合记录某个专业 agent 的行为。
 
     async def on_start(self, context: AgentHookContext[TContext], agent: TAgent) -> None:
         """Called before the agent is invoked. Called each time the running agent is changed to this
@@ -118,6 +130,7 @@ class AgentHooksBase(Generic[TContext, TAgent]):
             context: The agent hook context.
             agent: This agent instance.
         """
+        # 当前 agent 开始工作时触发，handoff 后新 agent 也会触发。
         pass
 
     async def on_end(

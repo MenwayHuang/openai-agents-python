@@ -8,6 +8,9 @@ from typing import Literal
 
 from .types import ExecResult
 
+# 学习提示：sandbox 的错误是结构化的，不只是普通字符串异常。
+# ErrorCode 适合日志、前端提示、自动恢复策略；SandboxError 负责携带 operation/path/details。
+
 
 class ErrorCode(str, Enum):
     """Stable, machine-readable error codes for `SandboxError`."""

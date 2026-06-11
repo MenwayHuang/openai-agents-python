@@ -16,6 +16,10 @@ from ..logger import logger
 from ..run_context import RunContextWrapper, TContext
 from ..util._types import MaybeAwaitable
 
+# 学习提示：RealtimeAgent 是普通 Agent 的实时语音版。它复用工具、handoff、guardrail
+# 等概念，但不支持结构化输出、每 Agent 单独 model 等能力，因为一个 RealtimeSession
+# 通常绑定一条持续的实时模型连接。
+
 RealtimeAgentHooks = AgentHooksBase[TContext, "RealtimeAgent[TContext]"]
 """Agent hooks for `RealtimeAgent`s."""
 
@@ -113,6 +117,7 @@ class RealtimeAgent(AgentBase, Generic[TContext]):
             new_agent = agent.clone(instructions="New instructions")
             ```
         """
+        # dataclasses.replace 会复制 dataclass，并用 kwargs 覆盖部分字段。
         return dataclasses.replace(self, **kwargs)
 
     async def get_system_prompt(self, run_context: RunContextWrapper[TContext]) -> str | None:

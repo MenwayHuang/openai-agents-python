@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+# 学习提示：LiteLLMModel 通过 litellm 调用多家模型，再适配回 Agents SDK 的统一模型接口。
+# 它和核心 OpenAI 模型层相比，更适合学习“兼容多 Provider 的代价和边界处理”。
+
 import json
 import os
 import time

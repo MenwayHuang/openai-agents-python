@@ -4,6 +4,9 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import TypeVar, cast
 
+# 学习提示：materialization 是把声明的文件/目录实际落到 sandbox 工作区的过程。
+# gather_in_order 是一个保序并发工具：并发执行任务，但返回结果仍按输入顺序排列。
+
 
 @dataclass(frozen=True)
 class MaterializedFile:
@@ -25,6 +28,7 @@ async def gather_in_order(
     *,
     max_concurrency: int | None = None,
 ) -> list[_TaskResultT]:
+    # max_concurrency 控制并发上限，避免同时读写太多文件或远端资源。
     if max_concurrency is not None and max_concurrency < 1:
         raise ValueError("max_concurrency must be at least 1")
     if not task_factories:
@@ -37,6 +41,7 @@ async def gather_in_order(
     next_index = 0
 
     async def _worker() -> None:
+        # nonlocal 允许内部函数修改外层 next_index。
         nonlocal next_index
         while next_index < len(task_factories):
             index = next_index

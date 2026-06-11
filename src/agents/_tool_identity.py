@@ -1,5 +1,14 @@
 from __future__ import annotations
 
+# 中文学习注释：
+# 这个文件负责 FunctionTool 的“身份识别”。
+# 不能只靠 tool.name 匹配工具，因为会存在：
+# - namespace 包起来的工具；
+# - deferred top-level tool；
+# - 审批恢复时从持久化状态反查工具；
+# - trace 展示名和运行时 dispatch key 不完全相同。
+# 所以这里用 tuple lookup key 表达不同来源，避免工具同名导致误执行。
+
 from collections.abc import Sequence
 from typing import Any, Literal, cast
 
@@ -16,10 +25,14 @@ FunctionToolLookupKey = (
     | DeferredTopLevelFunctionToolLookupKey
 )
 NamedToolLookupKey = FunctionToolLookupKey | str
+# 这几个 TypeAlias 让 lookup key 更明确：
+# ("bare", name)、("namespaced", namespace, name)、("deferred_top_level", name)。
+# 相比字符串拼接，tuple 更不容易和真实工具名冲突。
 
 
 class SerializedFunctionToolLookupKey(TypedDict, total=False):
     """Serialized representation of a function-tool lookup key."""
+    # TypedDict 用于把 tuple lookup key 持久化成 JSON 友好的 dict。
 
     kind: Required[Literal["bare", "namespaced", "deferred_top_level"]]
     name: Required[str]
@@ -28,6 +41,7 @@ class SerializedFunctionToolLookupKey(TypedDict, total=False):
 
 def get_mapping_or_attr(value: Any, key: str) -> Any:
     """Read a key from either a mapping or object attribute."""
+    # tool_call 可能是 OpenAI SDK 对象，也可能是 dict。统一字段读取方式。
     if isinstance(value, dict):
         return value.get(key)
     return getattr(value, key, None)
@@ -35,6 +49,7 @@ def get_mapping_or_attr(value: Any, key: str) -> Any:
 
 def tool_qualified_name(name: str | None, namespace: str | None = None) -> str | None:
     """Return `namespace.name` when a namespace exists, otherwise `name`."""
+    # 展示/trace 常用 namespace.name，但 dispatch 不直接依赖这个字符串。
     if not isinstance(name, str) or not name:
         return None
     if isinstance(namespace, str) and namespace:
@@ -51,6 +66,8 @@ def tool_trace_name(name: str | None, namespace: str | None = None) -> str | Non
 
 def is_reserved_synthetic_tool_namespace(name: str | None, namespace: str | None) -> bool:
     """Return True when a namespace matches the reserved deferred top-level wire shape."""
+    # deferred top-level 工具会使用一种合成 namespace 形态，namespace == name。
+    # 普通 namespace 不允许长这样，否则 dispatch 会有歧义。
     return (
         isinstance(name, str)
         and bool(name)
@@ -85,6 +102,7 @@ def get_function_tool_lookup_key(
     tool_namespace: str | None = None,
 ) -> FunctionToolLookupKey | None:
     """Return the collision-free lookup key for a function tool name/namespace pair."""
+    # 这是工具查找的核心入口：根据 name/namespace 得到无歧义 key。
     if not isinstance(tool_name, str) or not tool_name:
         return None
     if is_reserved_synthetic_tool_namespace(tool_name, tool_namespace):
@@ -116,6 +134,7 @@ def serialize_function_tool_lookup_key(
     lookup_key: FunctionToolLookupKey | None,
 ) -> SerializedFunctionToolLookupKey | None:
     """Serialize a function-tool lookup key into a JSON-friendly mapping."""
+    # RunState/approval item 持久化时不能直接依赖 tuple 语义，所以转成 dict。
     if lookup_key is None:
         return None
 
@@ -134,6 +153,7 @@ def serialize_function_tool_lookup_key(
 
 def deserialize_function_tool_lookup_key(data: Any) -> FunctionToolLookupKey | None:
     """Deserialize a persisted function-tool lookup key mapping."""
+    # 从 RunState 恢复时，把 JSON dict 还原成 lookup key tuple。
     if not isinstance(data, dict):
         return None
 
@@ -193,6 +213,8 @@ def _remove_tool_call_namespace(tool_call: Any) -> Any:
 
 def has_function_tool_shape(tool: Any) -> bool:
     """Return True when the object looks like a FunctionTool instance."""
+    # 这里不强依赖 isinstance(FunctionTool)，用“鸭子类型”判断。
+    # 对 copy/proxy/兼容对象更宽容。
     return callable(getattr(tool, "on_invoke_tool", None)) and isinstance(
         getattr(tool, "params_json_schema", None), dict
     )
@@ -227,6 +249,7 @@ def get_function_tool_namespace_description(tool: Any) -> str | None:
 
 def is_deferred_top_level_function_tool(tool: Any) -> bool:
     """Return True when the tool is deferred-loading without an explicit namespace."""
+    # deferred-loading 顶层工具一开始不完整暴露，需要特殊 lookup key 参与 Responses tool search。
     return (
         bool(getattr(tool, "defer_loading", False))
         and get_explicit_function_tool_namespace(tool) is None
@@ -244,6 +267,8 @@ def get_function_tool_dispatch_name(tool: Any) -> str | None:
 
 def get_function_tool_lookup_keys(tool: Any) -> tuple[FunctionToolLookupKey, ...]:
     """Return all lookup keys that should resolve this function tool."""
+    # 一个工具可能同时需要普通 key 和合成 deferred key。
+    # build_function_tool_lookup_map 会把这些 key 都指向同一个工具对象。
     tool_name = get_function_tool_public_name(tool)
     if tool_name is None:
         return ()
@@ -265,6 +290,8 @@ def get_function_tool_lookup_keys(tool: Any) -> tuple[FunctionToolLookupKey, ...
 
 def should_allow_bare_name_approval_alias(tool: Any, all_tools: Sequence[Any]) -> bool:
     """Allow bare-name approval aliases only for deferred top-level tools without visible peers."""
+    # 为了兼容旧审批状态，某些 deferred top-level 工具允许用 bare name 恢复审批。
+    # 但如果存在同名可见工具，就不能允许，否则会误匹配。
     tool_name = get_function_tool_public_name(tool)
     if tool_name is None or not is_deferred_top_level_function_tool(tool):
         return False
@@ -296,6 +323,7 @@ def validate_function_tool_namespace_shape(
     tool_namespace: str | None,
 ) -> None:
     """Reject reserved namespace shapes that collide with deferred top-level tool calls."""
+    # 防止用户创建 namespace.name 与 reserved deferred 形态冲突。
     if not is_reserved_synthetic_tool_namespace(tool_name, tool_namespace):
         return
 
@@ -309,6 +337,7 @@ def validate_function_tool_namespace_shape(
 
 def validate_function_tool_lookup_configuration(tools: Sequence[Any]) -> None:
     """Reject function-tool combinations that are ambiguous on the Responses wire."""
+    # 在把工具暴露给模型前先检查歧义配置，避免运行时模型调用后找错工具。
     qualified_name_owners: dict[str, Any] = {}
     deferred_top_level_name_owners: dict[str, Any] = {}
     for tool in tools:
@@ -351,6 +380,8 @@ def validate_function_tool_lookup_configuration(tools: Sequence[Any]) -> None:
 
 def build_function_tool_lookup_map(tools: Sequence[Any]) -> dict[FunctionToolLookupKey, Any]:
     """Build a function-tool lookup map using last-wins precedence."""
+    # 最终 dispatch 表：lookup key -> FunctionTool。
+    # “last-wins” 与模型请求转换/工具列表覆盖行为保持一致。
     validate_function_tool_lookup_configuration(tools)
     tool_map: dict[FunctionToolLookupKey, Any] = {}
     for tool in tools:

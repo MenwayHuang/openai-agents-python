@@ -1,4 +1,9 @@
-"""Utility for applying V4A diffs against text inputs."""
+"""Utility for applying V4A diffs against text inputs.
+
+学习提示：这是一个小型 diff 解析/应用器。它不是调用 git patch，
+而是解析 apply_patch 风格的文本块，再把增删行应用到输入字符串。
+目前对 PPT Agent 不是主链路，但对“让 Agent 安全编辑文件”很有参考价值。
+"""
 
 from __future__ import annotations
 
@@ -12,6 +17,8 @@ ApplyDiffMode = Literal["default", "create"]
 
 @dataclass
 class Chunk:
+    """一次局部修改：从原文 orig_index 开始，删除 del_lines，插入 ins_lines。"""
+
     orig_index: int
     del_lines: list[str]
     ins_lines: list[str]
@@ -19,6 +26,8 @@ class Chunk:
 
 @dataclass
 class ParserState:
+    """diff 解析时的游标状态；fuzz 记录宽松匹配程度。"""
+
     lines: list[str]
     index: int = 0
     fuzz: int = 0
@@ -56,6 +65,7 @@ def apply_diff(input: str, diff: str, mode: ApplyDiffMode = "default") -> str:
     lines) and the default update syntax that includes context hunks.
     """
     newline = _detect_newline(input, diff, mode)
+    # 解析时统一按 LF 处理，输出时再恢复原文本的换行风格。
     diff_lines = _normalize_diff_lines(diff)
     if mode == "create":
         return _parse_create_diff(diff_lines, newline=newline)
@@ -124,6 +134,7 @@ def _parse_create_diff(lines: list[str], newline: str) -> str:
 
 
 def _parse_update_diff(lines: list[str], input: str) -> ParsedUpdateDiff:
+    # update diff 由上下文行、删除行、插入行组成；必须先定位上下文再应用修改。
     parser = ParserState(lines=[*lines, END_PATCH])
     input_lines = input.split("\n")
     chunks: list[Chunk] = []
@@ -174,6 +185,7 @@ def _advance_cursor_to_anchor(
     cursor: int,
     parser: ParserState,
 ) -> int:
+    # @@ 后面的 anchor 用来把游标推进到更接近目标位置；strip 匹配会增加 fuzz。
     found = False
 
     if not any(line == anchor for line in input_lines[:cursor]):
@@ -195,6 +207,7 @@ def _advance_cursor_to_anchor(
 
 
 def _read_section(lines: list[str], start_index: int) -> ReadSectionResult:
+    # 读取一个 hunk 段落，分别收集上下文、删除行和插入行。
     context: list[str] = []
     del_lines: list[str] = []
     ins_lines: list[str] = []
@@ -279,6 +292,7 @@ class ContextMatch:
 
 
 def _find_context(lines: list[str], context: list[str], start: int, eof: bool) -> ContextMatch:
+    # eof hunk 优先从文件末尾找上下文；找不到再回退普通搜索并增加较大 fuzz。
     if eof:
         end_start = max(0, len(lines) - len(context))
         end_match = _find_context_core(lines, context, end_start)
@@ -290,6 +304,7 @@ def _find_context(lines: list[str], context: list[str], start: int, eof: bool) -
 
 
 def _find_context_core(lines: list[str], context: list[str], start: int) -> ContextMatch:
+    # 三档匹配：完全一致、忽略右侧空白、忽略两侧空白。
     if not context:
         return ContextMatch(new_index=start, fuzz=0)
 
@@ -318,6 +333,7 @@ def _equals_slice(
 
 
 def _apply_chunks(input: str, chunks: list[Chunk], newline: str) -> str:
+    # 按 chunk 顺序复制未变区域，再插入新增内容，跳过删除内容。
     orig_lines = input.split("\n")
     dest_lines: list[str] = []
     cursor = 0

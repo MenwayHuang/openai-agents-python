@@ -11,6 +11,9 @@ from .pipeline_config import VoicePipelineConfig
 from .result import StreamedAudioResult
 from .workflow import VoiceWorkflowBase
 
+# 学习提示：VoicePipeline 是语音链路的总编排：STT -> Agent workflow -> TTS。
+# 和 PPT Agent 的“需求理解 -> 规划 -> 生成 -> 质检”类似，都是分阶段 pipeline。
+
 
 class VoicePipeline:
     """An opinionated voice agent pipeline. It works in three steps:
@@ -75,6 +78,7 @@ class VoicePipeline:
         return self.stt_model
 
     async def _process_audio_input(self, audio_input: AudioInput) -> str:
+        # 单轮语音输入先完整转写成文本，再交给 workflow。
         model = self._get_stt_model()
         return await model.transcribe(
             audio_input,

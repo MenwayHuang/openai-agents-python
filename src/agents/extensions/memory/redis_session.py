@@ -17,6 +17,8 @@ Usage::
     )
 
     await Runner.run(agent, "Hello", session=session)
+
+学习提示：RedisSession 适合短期会话和高并发读写；如果要长期项目归档，还需要落库。
 """
 
 from __future__ import annotations

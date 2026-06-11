@@ -18,6 +18,10 @@ from .workspace_paths import (
     windows_absolute_path,
 )
 
+# 学习提示：Manifest 是 sandbox 文件系统布局和环境变量的声明。
+# 它告诉运行时：哪些文件/目录要放进工作区、哪些远端挂载可见、环境变量如何解析。
+# 对自研 Agent 来说，这是“把执行环境显式声明出来”的好样板。
+
 DEFAULT_REMOTE_MOUNT_COMMAND_ALLOWLIST = [
     "ls",
     "find",
@@ -42,6 +46,8 @@ DEFAULT_REMOTE_MOUNT_COMMAND_ALLOWLIST = [
 
 # TODO (sdcoffey) env val from secret store
 class EnvValue(BaseModel, abc.ABC):
+    """环境变量值的抽象基类，允许未来接入 secret store 等动态来源。"""
+
     @abc.abstractmethod
     async def resolve(self) -> str: ...
 
@@ -63,6 +69,7 @@ class Environment(BaseModel):
     value: dict[str, str | EnvValue | EnvEntry] = Field(default_factory=dict)
 
     def normalized(self) -> dict[str, EnvEntry]:
+        # match/case 是 Python 3.10 的模式匹配语法，用来按值类型归一化配置。
         result: dict[str, EnvEntry] = {}
         for key, value in self.value.items():
             match value:

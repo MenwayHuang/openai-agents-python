@@ -17,6 +17,9 @@ from .scope import Scope
 from .spans import NoOpSpan, Span, SpanImpl, TSpanData
 from .traces import NoOpTrace, Trace, TraceImpl
 
+# 学习提示：TraceProvider 负责创建 trace/span，并维护 processor 列表。
+# 它是 tracing 模块的核心服务对象，setup.py 会提供全局默认实例。
+
 
 def _safe_debug(message: str) -> None:
     """Best-effort debug logging that tolerates closed streams during shutdown."""

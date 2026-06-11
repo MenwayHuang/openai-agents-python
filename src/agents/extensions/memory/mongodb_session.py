@@ -27,6 +27,8 @@ Usage::
     )
 
     await Runner.run(agent, "Hello", session=session)
+
+学习提示：MongoDBSession 是文档数据库版 Session 后端，适合按 session_id 存 JSON 历史。
 """
 
 from __future__ import annotations

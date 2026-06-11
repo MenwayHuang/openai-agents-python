@@ -1,6 +1,9 @@
 import re
 from collections.abc import Callable
 
+# 学习提示：TTS 不一定要等完整回复生成完才播。这个 splitter 尝试按句子边界切块，
+# 让文字生成到一定长度后就可以先送去语音合成，降低首音频延迟。
+
 
 def get_sentence_based_splitter(
     min_sentence_length: int = 20,
@@ -26,6 +29,7 @@ def get_sentence_based_splitter(
         Returns:
             A tuple of the text to process and the remaining text buffer.
         """
+        # 正则 (?<=[.!?])\s+ 表示在句号/感叹号/问号后面的空白处分句。
         sentences = re.split(r"(?<=[.!?])\s+", text_buffer.strip())
         if len(sentences) >= 1:
             combined_sentences = " ".join(sentences[:-1])

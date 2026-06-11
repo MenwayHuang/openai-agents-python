@@ -10,8 +10,14 @@ from openai import APIConnectionError, APIStatusError, APITimeoutError
 
 from ..retry import ModelRetryAdvice, ModelRetryAdviceRequest, ModelRetryNormalizedError
 
+# 学习提示：这个文件专门把 OpenAI SDK/httpx 抛出的异常“归一化”为可重试建议。
+# 后续自研 PPT Agent 接入模型时也需要类似边界：哪些错误可以自动重放，
+# 哪些错误可能已经被服务端接受，不能盲目重试，否则会重复扣费或重复执行工具。
+
 
 def _iter_error_chain(error: Exception) -> Iterator[Exception]:
+    # Python 异常可能通过 __cause__ / __context__ 串起来；这里逐层遍历，
+    # 是为了从最外层 SDK 异常一路找到底层 httpx/OpenAI 错误信息。
     current: Exception | None = error
     seen: set[int] = set()
     while current is not None and id(current) not in seen:
@@ -22,6 +28,7 @@ def _iter_error_chain(error: Exception) -> Iterator[Exception]:
 
 
 def _header_lookup(headers: Any, key: str) -> str | None:
+    # httpx.Headers 是大小写不敏感的请求头结构；Mapping 分支兼容普通 dict。
     normalized_key = key.lower()
     if isinstance(headers, httpx.Headers):
         value = headers.get(key)
@@ -34,6 +41,8 @@ def _header_lookup(headers: Any, key: str) -> str | None:
 
 
 def _get_header_value(error: Exception, key: str) -> str | None:
+    # 错误对象上的 response、headers、response_headers 都可能藏着服务端提示。
+    # 比如 retry-after 会告诉客户端应该等待多久再重试。
     for candidate in _iter_error_chain(error):
         response = getattr(candidate, "response", None)
         if isinstance(response, httpx.Response):
@@ -50,6 +59,7 @@ def _get_header_value(error: Exception, key: str) -> str | None:
 
 
 def _parse_retry_after_ms(value: str | None) -> float | None:
+    # retry-after-ms 单位是毫秒，这里统一换成秒，方便后续 sleep/backoff。
     if value is None:
         return None
     try:
@@ -60,6 +70,7 @@ def _parse_retry_after_ms(value: str | None) -> float | None:
 
 
 def _parse_retry_after(value: str | None) -> float | None:
+    # 标准 retry-after 可能是秒数，也可能是 HTTP 日期；两种都兼容。
     if value is None:
         return None
 
@@ -127,6 +138,8 @@ def _build_normalized_error(
     *,
     retry_after: float | None,
 ) -> ModelRetryNormalizedError:
+    # NormalizedError 是跨 Provider 的统一错误摘要：
+    # 状态码、错误码、request_id、是否网络错误、是否超时都收敛到一个结构里。
     return ModelRetryNormalizedError(
         status_code=_get_status_code(error),
         error_code=_get_error_code(error),
@@ -144,8 +157,10 @@ def _build_normalized_error(
 
 
 def get_openai_retry_advice(request: ModelRetryAdviceRequest) -> ModelRetryAdvice | None:
+    # 核心判断入口：模型调用失败后，RunLoop 会问这里“建议不建议重试”。
     error = request.error
     if getattr(error, "unsafe_to_replay", False):
+        # unsafe_to_replay 表示请求可能已被服务端接收，自动重放会有副作用。
         return ModelRetryAdvice(
             suggested=False,
             replay_safety="unsafe",
@@ -157,6 +172,7 @@ def get_openai_retry_advice(request: ModelRetryAdviceRequest) -> ModelRetryAdvic
         "the request may have been accepted, so the sdk will not automatically "
         "retry this websocket request." in error_message
     ):
+        # WebSocket 在事件边界前失败时尤其要小心：服务端可能已经处理了请求。
         return ModelRetryAdvice(
             suggested=False,
             replay_safety="unsafe",
@@ -171,6 +187,7 @@ def get_openai_retry_advice(request: ModelRetryAdviceRequest) -> ModelRetryAdvic
     stateful_request = _is_stateful_request(request)
     should_retry_header = _get_header_value(error, "x-should-retry")
     if should_retry_header is not None:
+        # OpenAI 服务端可能通过 x-should-retry 直接给客户端决策建议。
         header_value = should_retry_header.lower().strip()
         if header_value == "true":
             return ModelRetryAdvice(
@@ -189,6 +206,7 @@ def get_openai_retry_advice(request: ModelRetryAdviceRequest) -> ModelRetryAdvic
             )
 
     if normalized.is_network_error or normalized.is_timeout:
+        # 网络断开或超时通常可以重试，但是否安全仍取决于请求是否有状态。
         return ModelRetryAdvice(
             suggested=True,
             retry_after=retry_after,

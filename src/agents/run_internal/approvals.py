@@ -2,6 +2,9 @@
 Helpers for approval handling within the run loop. Keep only execution-time utilities that
 coordinate approval placeholders and normalization; public APIs should stay in run.py or
 peer modules.
+
+学习提示：approval 是“工具执行前需要人工批准”的机制。
+这里放运行时对 approval item 的过滤、占位输出和恢复输入整理。
 """
 
 from __future__ import annotations

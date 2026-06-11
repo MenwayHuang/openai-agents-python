@@ -1,3 +1,12 @@
+"""Agents SDK 对外公开 API 汇总。
+
+中文学习说明：
+- 用户 `from agents import Agent, Runner, function_tool` 时，大部分对象来自这里重新导出。
+- 这个文件不承载核心逻辑，主要是整理公共 API、默认配置函数和可选模块导入。
+- 读源码时不要从这里追全部实现，应该跳到具体模块：Agent 看 `agent.py`，运行看 `run.py`，
+  工具看 `tool.py`，模型适配看 `models/`，MCP 看 `mcp/`。
+"""
+
 import logging
 import sys
 from typing import TYPE_CHECKING, Any, Literal

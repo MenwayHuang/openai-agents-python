@@ -1,3 +1,9 @@
+# 中文学习注释：
+# 这个文件负责 Agent 的“结构化最终输出”。
+# 当 Agent.output_type 不是 str/None 时，SDK 会把它转成 JSON Schema 发给模型，
+# 再把模型返回的 JSON 字符串用 Pydantic TypeAdapter 校验成 Python 对象。
+# 它和 function_schema.py 很像：一个处理工具参数 schema，一个处理最终输出 schema。
+
 import abc
 from dataclasses import dataclass
 from typing import Any, get_args, get_origin
@@ -17,6 +23,8 @@ class AgentOutputSchemaBase(abc.ABC):
     """An object that captures the JSON schema of the output, as well as validating/parsing JSON
     produced by the LLM into the output type.
     """
+    # abc.ABC + @abstractmethod 表示抽象基类。
+    # 子类必须实现这些方法，才能作为可用的 output schema。
 
     @abc.abstractmethod
     def is_plain_text(self) -> bool:
@@ -56,6 +64,8 @@ class AgentOutputSchema(AgentOutputSchemaBase):
     """An object that captures the JSON schema of the output, as well as validating/parsing JSON
     produced by the LLM into the output type.
     """
+    # init=False 表示 dataclass 不自动生成 __init__，因为下面需要手写初始化逻辑。
+    # 这个类把任意 Python 类型包装成统一的 output schema/validator。
 
     output_type: type[Any]
     """The type of the output."""
@@ -87,6 +97,7 @@ class AgentOutputSchema(AgentOutputSchemaBase):
         self._strict_json_schema = strict_json_schema
 
         if output_type is None or output_type is str:
+            # 普通文本输出不需要 JSON Schema。
             self._is_wrapped = False
             self._type_adapter = TypeAdapter(output_type)
             self._output_schema = self._type_adapter.json_schema()
@@ -94,9 +105,13 @@ class AgentOutputSchema(AgentOutputSchemaBase):
 
         # We should wrap for things that are not plain text, and for things that would definitely
         # not be a JSON Schema object.
+        # JSON Schema 的顶层通常要求 object。
+        # 如果 output_type 是 list[int] 这类非 object 类型，就包装成 {"response": ...}。
         self._is_wrapped = not _is_subclass_of_base_model_or_dict(output_type)
 
         if self._is_wrapped:
+            # TypedDict 动态创建一个只包含 response 字段的 dict 类型。
+            # 这样 list/int 等类型也能作为结构化输出返回。
             OutputType = TypedDict(
                 "OutputType",
                 {
@@ -111,6 +126,7 @@ class AgentOutputSchema(AgentOutputSchemaBase):
 
         if self._strict_json_schema:
             try:
+                # strict schema 会收紧模型输出格式，提升可校验概率。
                 self._output_schema = ensure_strict_json_schema(self._output_schema)
             except UserError as e:
                 raise UserError(
@@ -137,6 +153,8 @@ class AgentOutputSchema(AgentOutputSchemaBase):
         """Validate a JSON string against the output type. Returns the validated object, or raises
         a `ModelBehaviorError` if the JSON is invalid.
         """
+        # _json.validate_json 用 TypeAdapter 校验模型返回的 JSON 文本。
+        # 如果前面做过 wrapper，这里再把 response 字段拆出来给调用方。
         validated = _json.validate_json(json_str, self._type_adapter, partial=False)
         if self._is_wrapped:
             if not isinstance(validated, dict):
@@ -169,6 +187,7 @@ class AgentOutputSchema(AgentOutputSchemaBase):
 
 
 def _is_subclass_of_base_model_or_dict(t: Any) -> bool:
+    # get_origin 用于处理泛型类型，例如 dict[str, int] 的 origin 是 dict。
     # If it's a generic alias, 'origin' will be the actual type, e.g. 'list'
     origin = get_origin(t)
     if origin is not None:
@@ -181,6 +200,7 @@ def _is_subclass_of_base_model_or_dict(t: Any) -> bool:
 
 
 def _type_to_str(t: Any) -> str:
+    # 把复杂类型转成可读名字，用于 trace/schema 名称，例如 list[str]。
     origin = get_origin(t)
     args = get_args(t)
 

@@ -5,6 +5,9 @@ from enum import IntEnum
 from pydantic import BaseModel, Field
 from typing_extensions import Self
 
+# 学习提示：sandbox 的基础类型定义，包括用户、用户组、权限、执行结果等。
+# Permissions 负责在 Unix mode 数字和 -rwx 字符串之间转换。
+
 
 class User(BaseModel):
     name: str
@@ -38,6 +41,7 @@ class Permissions(BaseModel):
     directory: bool = Field(default=False)
 
     def to_mode(self) -> int:
+        # Unix 权限按 owner/group/other 分别左移到对应 bit 位。
         mode = 0
         for perms, shift in [(self.owner, 6), (self.group, 3), (self.other, 0)]:
             mode |= int(perms) << shift
@@ -56,6 +60,7 @@ class Permissions(BaseModel):
 
     @classmethod
     def from_str(cls, perms: str) -> "Permissions":
+        # 解析类似 drwxr-xr-x 的权限字符串，末尾 @/+ 是 macOS 扩展标记，先去掉。
         if len(perms) == 11 and perms[-1] in {"@", "+"}:
             perms = perms[:-1]
         if len(perms) != 10:

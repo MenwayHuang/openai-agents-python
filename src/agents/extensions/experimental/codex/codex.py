@@ -10,6 +10,8 @@ from .exec import CodexExec
 from .thread import Thread
 from .thread_options import ThreadOptions, coerce_thread_options
 
+# 学习提示：Codex 是 Codex CLI 的高级封装，负责创建 Thread 并转发全局配置。
+
 
 class _UnsetType:
     pass

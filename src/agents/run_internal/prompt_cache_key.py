@@ -12,6 +12,9 @@ from .run_grouping import RunGroupingKind, resolve_run_grouping
 
 PROMPT_CACHE_KEY_FIELD = "prompt_cache_key"
 
+# 学习提示：prompt cache key 用来让同一会话/同一分组的请求命中模型侧 prompt cache。
+# Resolver 会在没有用户显式配置时自动生成并保存到 RunState，便于恢复后继续复用。
+
 
 @dataclass
 class PromptCacheKeyResolver:

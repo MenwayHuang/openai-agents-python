@@ -1,3 +1,11 @@
+"""MCP server 生命周期管理器。
+
+中文学习说明：
+- `MCPServerManager` 适合在 FastAPI lifespan 或应用启动阶段统一连接/清理 MCP servers。
+- 它可以记录失败 server，只把连接成功的 server 暴露给 Agent，避免单个外部工具服务拖垮整个 Agent。
+- 对 PPT Agent 来说，后续如果接入多个素材/文件/设计 MCP 服务，可以用类似 manager 统一管理。
+"""
+
 from __future__ import annotations
 
 import asyncio
@@ -12,12 +20,15 @@ from .server import MCPServer
 
 @dataclass
 class _ServerCommand:
+    # worker 队列里的命令对象：connect 或 cleanup，以及对应超时和等待结果的 Future。
     action: str
     timeout_seconds: float | None
     future: asyncio.Future[None]
 
 
 class _ServerWorker:
+    # 并行连接模式下，每个 server 一个 worker task。这样 connect/cleanup 可以保持在同一 task，
+    # 避免某些 AnyIO/MCP transport 对 task 归属敏感。
     def __init__(
         self,
         server: MCPServer,
@@ -41,6 +52,7 @@ class _ServerWorker:
         await self._submit("cleanup", self._cleanup_timeout_seconds)
 
     async def _submit(self, action: str, timeout_seconds: float | None) -> None:
+        # 调用方把命令放进队列，然后 await future，worker 执行完后 set_result/set_exception。
         loop = asyncio.get_running_loop()
         future: asyncio.Future[None] = loop.create_future()
         await self._queue.put(
@@ -142,6 +154,8 @@ class MCPServerManager(AbstractAsyncContextManager["MCPServerManager"]):
     - `connect_in_parallel=True` uses a dedicated worker task per server to
       allow concurrent connects while preserving task affinity for cleanup.
     """
+    # 这是工程化入口：外层用 `async with MCPServerManager(...)`，
+    # 保证 connect_all 和 cleanup_all 成对执行。
 
     def __init__(
         self,
@@ -189,6 +203,8 @@ class MCPServerManager(AbstractAsyncContextManager["MCPServerManager"]):
 
     async def connect_all(self) -> list[MCPServer]:
         """Connect all servers in order and return the active list."""
+        # strict=False 时，失败 server 会记录到 failed_servers/errors，
+        # 但不会阻止其他 server 被使用。
         previous_connected_servers = set(self._connected_servers)
         previous_active_servers = list(self._active_servers)
         self.failed_servers = []
@@ -232,6 +248,7 @@ class MCPServerManager(AbstractAsyncContextManager["MCPServerManager"]):
             failed_only: If True, only retry servers that previously failed.
                 If False, cleanup and retry all servers.
         """
+        # 运行中可以重连失败的 MCP server，用于外部服务恢复后的自愈。
         if failed_only:
             servers_to_retry = self._unique_servers(self.failed_servers)
         else:
@@ -254,6 +271,7 @@ class MCPServerManager(AbstractAsyncContextManager["MCPServerManager"]):
 
     async def cleanup_all(self) -> None:
         """Cleanup all servers in reverse order."""
+        # 反向清理是资源管理常见做法：后创建/后连接的资源先关闭。
         for server in reversed(self._all_servers):
             try:
                 await self._cleanup_server(server)
@@ -302,6 +320,7 @@ class MCPServerManager(AbstractAsyncContextManager["MCPServerManager"]):
             self._active_servers = list(self._all_servers)
 
     def _record_failure(self, server: MCPServer, exc: BaseException, phase: str) -> None:
+        # 失败信息集中记录，方便应用层展示“哪些 MCP 服务不可用”。
         logger.exception(f"Failed to {phase} MCP server '{server.name}': {exc}")
         if server not in self._failed_server_set:
             self.failed_servers.append(server)

@@ -4,6 +4,9 @@ from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 from typing import Any
 
+# 学习提示：MCP 工具除了给模型看的 description，也可能有给 UI 展示的 title。
+# 这个文件把 MCP tool-like 对象上的标题/描述提取成统一结构。
+
 
 @dataclass(frozen=True)
 class MCPToolMetadata:

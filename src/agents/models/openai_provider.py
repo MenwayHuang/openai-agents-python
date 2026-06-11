@@ -1,3 +1,11 @@
+"""OpenAI 模型 Provider。
+
+中文学习说明：
+- OpenAIProvider 根据配置决定返回 ResponsesModel、ResponsesWSModel 或 ChatCompletionsModel。
+- 它负责创建/复用 AsyncOpenAI client，并共享 httpx 连接池以降低延迟和资源消耗。
+- 对 PPT Agent 来说，正式后端建议把 provider/client 作为应用级依赖管理，而不是每次请求都新建。
+"""
+
 from __future__ import annotations
 
 import asyncio
@@ -34,6 +42,7 @@ _WSLoopModelCache = dict[_WSModelCacheKey, Model]
 # If we create a new httpx client for each request, that would mean no sharing of connection pools,
 # which would mean worse latency and resource usage. So, we share the client across requests.
 def shared_http_client() -> httpx.AsyncClient:
+    # 共享 httpx client 可以复用连接池，避免每次模型调用都重新建连接。
     global _http_client
     if _http_client is None:
         _http_client = DefaultAsyncHttpxClient()
@@ -41,6 +50,7 @@ def shared_http_client() -> httpx.AsyncClient:
 
 
 class OpenAIProvider(ModelProvider):
+    # OpenAIProvider 是 ModelProvider 的具体实现，负责按模型名创建/缓存 Model。
     def __init__(
         self,
         *,
@@ -124,6 +134,7 @@ class OpenAIProvider(ModelProvider):
     # We lazy load the client in case you never actually use OpenAIProvider(). Otherwise
     # AsyncOpenAI() raises an error if you don't have an API key set.
     def _get_client(self) -> AsyncOpenAI:
+        # 懒加载 client：只有真的调用模型时才要求 API key 存在。
         if self._client is None:
             self._client = _openai_shared.get_default_openai_client() or AsyncOpenAI(
                 api_key=self._stored_api_key or _openai_shared.get_default_openai_key(),

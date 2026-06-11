@@ -1,3 +1,11 @@
+"""创建 Trace 和 Span 的工厂函数。
+
+中文学习说明：
+- Trace 是一次完整工作流，比如“一次 PPT 生成任务”。
+- Span 是工作流里的局部阶段，比如“第 2 轮模型调用”“执行 render_ppt 工具”“handoff 到审稿 agent”。
+- 这个文件只负责创建观测对象，真正的导出/上报由 trace provider/processor 负责。
+"""
+
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
@@ -60,6 +68,8 @@ def trace(
     Returns:
         The newly created trace object.
     """
+    # 创建 trace 后还要 start/finish。通常用 `with trace("xxx"):` 最不容易忘记收尾。
+    # `group_id` 很适合放用户会话/项目 ID，把同一项目的多次运行串起来。
     current_trace = get_trace_provider().get_current_trace()
     if current_trace:
         logger.warning(
@@ -113,6 +123,8 @@ def agent_span(
     Returns:
         The newly created agent span.
     """
+    # Agent span 描述“哪个 agent 在工作，它有哪些工具/handoff/output_type”。
+    # 对 PPT Agent 可用来观察 planner、template_selector、critic 等 agent 的职责边界。
     return get_trace_provider().create_span(
         span_data=AgentSpanData(name=name, handoffs=handoffs, tools=tools, output_type=output_type),
         span_id=span_id,
@@ -128,6 +140,7 @@ def task_span(
     disabled: bool = False,
 ) -> Span[TaskSpanData]:
     """Create a new task span. This represents one top-level Runner invocation."""
+    # task span 对应一次顶层 Runner 调用，是 trace 里的主任务节点。
     return get_trace_provider().create_span(
         span_data=TaskSpanData(name=name),
         span_id=span_id,
@@ -144,6 +157,7 @@ def turn_span(
     disabled: bool = False,
 ) -> Span[TurnSpanData]:
     """Create a new turn span. This represents one agent loop turn."""
+    # turn span 对应 Agent loop 的一轮：模型响应 -> 工具/交接/最终输出。
     return get_trace_provider().create_span(
         span_data=TurnSpanData(turn=turn, agent_name=agent_name),
         span_id=span_id,
@@ -177,6 +191,8 @@ def function_span(
     Returns:
         The newly created function span.
     """
+    # function span 用于本地工具执行。以后 PPT Agent 的模板渲染、图片搜索、文件导出
+    # 都可以落成类似 span，方便定位慢在哪里、错在哪里。
     return get_trace_provider().create_span(
         span_data=FunctionSpanData(name=name, input=input, output=output),
         span_id=span_id,
@@ -219,6 +235,8 @@ def generation_span(
     Returns:
         The newly created generation span.
     """
+    # generation span 记录模型输入/输出/参数/usage，适合通用 LLM 观测。
+    # 注意生产环境要控制敏感数据采集，避免把用户隐私或密钥写入 trace。
     return get_trace_provider().create_span(
         span_data=GenerationSpanData(
             input=input,
@@ -251,6 +269,7 @@ def response_span(
             trace/span as the parent.
         disabled: If True, we will return a Span but the Span will not be recorded.
     """
+    # response_span 更轻量，重点记录 OpenAI Response id 和 usage。
     return get_trace_provider().create_span(
         span_data=ResponseSpanData(response=response),
         span_id=span_id,
@@ -282,6 +301,7 @@ def handoff_span(
     Returns:
         The newly created handoff span.
     """
+    # handoff span 记录 agent 之间的控制权转移，是多 agent 系统排查流程跳转的关键。
     return get_trace_provider().create_span(
         span_data=HandoffSpanData(from_agent=from_agent, to_agent=to_agent),
         span_id=span_id,
@@ -314,6 +334,7 @@ def custom_span(
     Returns:
         The newly created custom span.
     """
+    # custom_span 给业务自定义阶段使用，比如“解析 PPT 模板”“生成封面图”“保存项目”。
     return get_trace_provider().create_span(
         span_data=CustomSpanData(name=name, data=data or {}),
         span_id=span_id,
@@ -342,6 +363,7 @@ def guardrail_span(
             trace/span as the parent.
         disabled: If True, we will return a Span but the Span will not be recorded.
     """
+    # guardrail span 记录防护规则是否触发。生产环境中它是审计和安全排查的重要信息。
     return get_trace_provider().create_span(
         span_data=GuardrailSpanData(name=name, triggered=triggered),
         span_id=span_id,
@@ -483,6 +505,7 @@ def mcp_tools_span(
             trace/span as the parent.
         disabled: If True, we will return a Span but the Span will not be recorded.
     """
+    # MCP list tools span 记录某个 MCP server 暴露了哪些工具，便于排查工具发现失败。
     return get_trace_provider().create_span(
         span_data=MCPListToolsSpanData(server=server, result=result),
         span_id=span_id,

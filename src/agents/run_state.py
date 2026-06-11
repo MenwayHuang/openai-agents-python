@@ -1,4 +1,12 @@
-"""RunState class for serializing and resuming agent runs with human-in-the-loop support."""
+"""RunState：可序列化、可恢复的 Agent 运行快照。
+
+中文学习说明：
+- `RunState` 是 Human-in-the-loop、断点续跑、服务重启后恢复任务的核心。
+- 它保存当前 agent、原始输入、模型响应、生成 item、审批状态、guardrail 结果、
+  trace、sandbox、server conversation id 等信息。
+- 对 PPT Agent 来说，这个文件非常值得学习：后续如果一个 PPT 生成任务需要“用户确认大纲
+  后继续生成”“审批联网搜图”“任务失败后恢复”，就需要类似的任务状态快照。
+"""
 
 from __future__ import annotations
 
@@ -122,6 +130,8 @@ ContextDeserializer = Callable[[Mapping[str, Any]], Any]
 
 
 # RunState schema policy.
+# 这里是持久化协议的版本策略。只要状态会落盘/跨服务传输，就必须有 schema version，
+# 否则未来字段变更后旧任务无法可靠恢复。
 # 1. Keep schema versions shipped in releases readable.
 # 2. Unreleased schema versions may be renumbered or squashed before release when their
 #    intermediate snapshots are intentionally unsupported.
@@ -130,6 +140,8 @@ ContextDeserializer = Callable[[Mapping[str, Any]], Any]
 #    versions).
 CURRENT_SCHEMA_VERSION = "1.10"
 # Keep this mapping in chronological order. Every schema bump must add a one-line summary here.
+# 每次持久化结构变化都要写摘要，这是生产级系统很好的习惯：
+# 以后排查“为什么旧任务恢复失败”时能快速知道版本差异。
 SCHEMA_VERSION_SUMMARIES: dict[str, str] = {
     "1.0": "Initial RunState snapshot format for HITL pause/resume flows.",
     "1.1": "Same payload as 1.0, but introduces explicit backward-read support policy.",
@@ -163,6 +175,8 @@ if _missing_schema_version_summaries:
     )
 
 _FUNCTION_OUTPUT_ADAPTER: TypeAdapter[FunctionCallOutput] = TypeAdapter(FunctionCallOutput)
+# TypeAdapter 是 Pydantic v2 的类型校验器。这里给 Responses API 的复杂 union/dict
+# 建立专门适配器，反序列化 RunState 时能把 JSON 恢复成正确结构。
 _COMPUTER_OUTPUT_ADAPTER: TypeAdapter[ComputerCallOutput] = TypeAdapter(ComputerCallOutput)
 _LOCAL_SHELL_OUTPUT_ADAPTER: TypeAdapter[LocalShellCallOutput] = TypeAdapter(LocalShellCallOutput)
 _TOOL_CALL_OUTPUT_UNION_ADAPTER: TypeAdapter[
@@ -195,6 +209,8 @@ class RunState(Generic[TContext, TAgent]):
     - When no safe serializer is available, the snapshot is still written but emits warnings and
       records metadata describing what is required to rebuild the original context type.
     """
+    # `RunState` 不只是“当前变量集合”，它是可落盘的恢复协议。
+    # 设计自己的 Agent 服务时，可以把它类比为数据库里的 `agent_tasks.state_json`。
 
     _current_turn: int = 0
     """Current turn number in the conversation."""
@@ -216,9 +232,11 @@ class RunState(Generic[TContext, TAgent]):
 
     _generated_items: list[RunItem] = field(default_factory=list)
     """Items used to build model input when resuming; may be filtered by handoffs."""
+    # `_generated_items` 是“下一轮要回放给模型的运行历史”，可能被 handoff filter 改写。
 
     _session_items: list[RunItem] = field(default_factory=list)
     """Full, unfiltered run items for session history."""
+    # `_session_items` 是完整会话历史，偏审计/展示；和 `_generated_items` 的用途不同。
 
     _max_turns: int | None = 10
     """Maximum allowed turns before forcing termination, or ``None`` for no limit."""
@@ -252,6 +270,7 @@ class RunState(Generic[TContext, TAgent]):
 
     _current_step: NextStepInterruption | None = None
     """Current step if the run is interrupted (e.g., for tool approval)."""
+    # 如果运行被工具审批打断，这里保存当前 pending interruption。
 
     _last_processed_response: ProcessedResponse | None = None
     """The last processed model response. This is needed for resuming from interruptions."""
@@ -289,6 +308,8 @@ class RunState(Generic[TContext, TAgent]):
         auto_previous_response_id: bool = False,
     ):
         """Initialize a new RunState."""
+        # 这里没有完全依赖 dataclass 自动 __init__，因为初始化时需要把 context、
+        # starting_agent、original_input、scope id 等字段按恢复语义显式设置。
         self._context = context
         self._original_input = _clone_original_input(original_input)
         self._starting_agent = starting_agent
@@ -317,11 +338,14 @@ class RunState(Generic[TContext, TAgent]):
         self._schema_version = CURRENT_SCHEMA_VERSION
         from .agent_tool_state import get_agent_tool_state_scope
 
+        # 嵌套 agent-as-tool 可能也会有自己的 pending state，用 scope id 隔离不同运行。
         self._agent_tool_state_scope_id = get_agent_tool_state_scope(context)
 
     def get_interruptions(self) -> list[ToolApprovalItem]:
         """Return pending interruptions if the current step is an interruption."""
         # Import at runtime to avoid circular import
+        # 运行时导入用于避开循环依赖：run_state 需要 run_steps 类型，
+        # run_steps 又可能引用 run_state 相关类型。
         from .run_internal.run_steps import NextStepInterruption
 
         if self._current_step is None or not isinstance(self._current_step, NextStepInterruption):
@@ -330,6 +354,8 @@ class RunState(Generic[TContext, TAgent]):
 
     def approve(self, approval_item: ToolApprovalItem, always_approve: bool = False) -> None:
         """Approve a tool call and rerun with this state to continue."""
+        # 这是用户/系统批准 pending 工具调用的入口。批准后并不会立刻执行，
+        # 而是把审批结果写进 context，下一次 Runner 续跑时读取。
         if self._context is None:
             raise UserError("Cannot approve tool: RunState has no context")
         self._context.approve_tool(approval_item, always_approve=always_approve)
@@ -347,6 +373,8 @@ class RunState(Generic[TContext, TAgent]):
         run resumes. Otherwise the run-level tool error formatter or the SDK default message is
         used.
         """
+        # 拒绝也只是写入状态。`rejection_message` 会在续跑时作为工具失败反馈给模型，
+        # 让模型有机会改用别的方案。
         if self._context is None:
             raise UserError("Cannot reject tool: RunState has no context")
         self._context.reject_tool(
@@ -357,6 +385,8 @@ class RunState(Generic[TContext, TAgent]):
 
     def _serialize_approvals(self) -> dict[str, dict[str, Any]]:
         """Serialize approval records into a JSON-friendly mapping."""
+        # 把内存里的审批表转成纯 JSON。注意 list/bool 两种形态：
+        # bool 表示永久决策，list[str] 表示只针对某些 call_id。
         if self._context is None:
             return {}
         approvals_dict: dict[str, dict[str, Any]] = {}
@@ -422,6 +452,9 @@ class RunState(Generic[TContext, TAgent]):
         for simple mapping contexts without silently pretending that richer custom objects can be
         reconstructed automatically.
         """
+        # context 是业务对象，最容易序列化失败。这里采取保守策略：
+        # mapping 可直接保存；Pydantic/dataclass 可保存数据但提示需要反序列化器；
+        # 其他对象默认不盲目 pickle，避免安全和兼容风险。
         if self._context is None:
             return None, _build_context_meta(
                 None,
@@ -536,6 +569,8 @@ class RunState(Generic[TContext, TAgent]):
 
     def _serialize_tool_input(self, tool_input: Any) -> Any:
         """Normalize tool input for JSON serialization."""
+        # 当前工具输入可能是 dataclass、Pydantic 模型、dict/list 或普通值，
+        # 这里统一成 JSON 可写格式。
         if tool_input is None:
             return None
 
@@ -553,6 +588,8 @@ class RunState(Generic[TContext, TAgent]):
 
     def _current_generated_items_merge_marker(self) -> str | None:
         """Return a marker for the processed response already reflected in _generated_items."""
+        # 为了避免恢复/序列化时重复追加同一批 new_items，这里生成一个稳定 marker。
+        # marker 包含 turn、last_response_id、new_items 序列化内容。
         if not (self._last_processed_response and self._last_processed_response.new_items):
             return None
 
@@ -588,6 +625,8 @@ class RunState(Generic[TContext, TAgent]):
 
     def _merge_generated_items_with_processed(self) -> list[RunItem]:
         """Merge persisted and newly processed items without duplication."""
+        # 中断发生时，一部分 item 可能已经进了 `_generated_items`，
+        # 另一部分还在 `_last_processed_response`。这里合并并按 id/call_id 去重。
         generated_items = list(self._generated_items)
         if not (self._last_processed_response and self._last_processed_response.new_items):
             return generated_items
@@ -676,6 +715,8 @@ class RunState(Generic[TContext, TAgent]):
         Raises:
             UserError: If required state (agent, context) is missing.
         """
+        # 这是 RunState 最核心的输出协议。真正生产落盘时通常就是把这个 dict
+        # 写进数据库 JSON 字段、对象存储或队列消息。
         if self._current_agent is None:
             raise UserError("Cannot serialize RunState: No current agent")
         if self._context is None:
@@ -701,6 +742,7 @@ class RunState(Generic[TContext, TAgent]):
             context_entry["tool_input"] = tool_input
 
         agent_identity_keys_by_id = (
+            # Agent 可能同名；序列化引用时优先用从 agent 图推导出的稳定 identity key。
             _build_agent_identity_keys_by_id(cast(Agent[Any], self._starting_agent))
             if self._starting_agent is not None
             else None
@@ -742,6 +784,8 @@ class RunState(Generic[TContext, TAgent]):
         }
 
         generated_items = self._merge_generated_items_with_processed()
+        # 分别保存“回放给模型的 generated_items”和“完整 session_items”，
+        # 这能兼顾下一轮模型上下文与产品侧历史展示/审计。
         result["generated_items"] = [
             self._serialize_item(item, agent_identity_keys_by_id=agent_identity_keys_by_id)
             for item in generated_items
@@ -789,8 +833,11 @@ class RunState(Generic[TContext, TAgent]):
         Returns:
             A dictionary representation of the ProcessedResponse.
         """
+        # ProcessedResponse 是“模型响应已经解析后的结构”，里面包含工具执行计划、
+        # handoff、final output 等。序列化它可以在工具审批中断后恢复到同一个决策点。
 
         action_groups = _serialize_tool_action_groups(processed_response)
+        # 嵌套 agent-as-tool 如果也中断了，需要把它的子 RunState 一并保存到父状态里。
         _serialize_pending_nested_agent_tool_runs(
             parent_state=self,
             function_entries=action_groups.get("functions", []),
@@ -859,6 +906,8 @@ class RunState(Generic[TContext, TAgent]):
         agent_identity_keys_by_id: Mapping[int, str] | None = None,
     ) -> dict[str, Any]:
         """Serialize a run item to JSON-compatible dict."""
+        # RunItem 是一个联合类型，所以这里先写公共字段，再按 item 具体能力补充 output、
+        # source/target agent、tool_name、tool_origin 等扩展字段。
         raw_item_dict: Any = _serialize_raw_item_value(item.raw_item)
 
         result: dict[str, Any] = {
@@ -913,6 +962,8 @@ class RunState(Generic[TContext, TAgent]):
 
     def _lookup_function_name(self, call_id: str) -> str:
         """Attempt to find the function name for the provided call_id."""
+        # 恢复旧格式工具输出时，可能只有 call_id 没有 name。
+        # 这里反查历史 tool_call_item，尽量补回函数名。
         if not call_id:
             return ""
 
@@ -975,6 +1026,7 @@ class RunState(Generic[TContext, TAgent]):
         Returns:
             JSON string representation of the run state.
         """
+        # 对外存储/调试时常用字符串形式；本质还是 `to_json()` 的 pretty JSON。
         return json.dumps(
             self.to_json(
                 context_serializer=context_serializer,
@@ -986,6 +1038,7 @@ class RunState(Generic[TContext, TAgent]):
 
     def set_trace(self, trace: Trace | None) -> None:
         """Capture trace metadata for serialization/resumption."""
+        # trace 是观测数据，不参与模型推理，但对排查任务链路很重要。
         self._trace_state = TraceState.from_trace(trace)
 
     def _serialize_trace_data(self, *, include_tracing_api_key: bool) -> dict[str, Any] | None:
@@ -1045,6 +1098,7 @@ class RunState(Generic[TContext, TAgent]):
         Raises:
             UserError: If the string is invalid JSON or has incompatible schema version.
         """
+        # 字符串恢复入口：先 JSON parse，再走 from_json 的统一恢复逻辑。
         try:
             state_json = json.loads(state_string)
         except json.JSONDecodeError as e:
@@ -1086,6 +1140,8 @@ class RunState(Generic[TContext, TAgent]):
         Raises:
             UserError: If the dict has incompatible schema version.
         """
+        # JSON 恢复入口：需要 initial_agent 来重建 agent 图映射，
+        # 因为状态里通常只存 agent 引用/身份，不会把完整 Python 对象序列化进去。
         return await _build_run_state_from_json(
             initial_agent=initial_agent,
             state_json=state_json,
@@ -1186,6 +1242,7 @@ def _transform_field_names(
     data: dict[str, Any] | list[Any] | Any, field_map: Mapping[str, str]
 ) -> Any:
     """Recursively remap field names using the provided mapping."""
+    # 兼容不同版本字段名时常用的递归转换，例如 camelCase -> snake_case。
     if isinstance(data, dict):
         transformed: dict[str, Any] = {}
         for key, value in data.items():
@@ -1219,6 +1276,8 @@ def _serialize_agent_reference(
     agent_identity_keys_by_id: Mapping[int, str] | None = None,
 ) -> dict[str, Any]:
     """Serialize an agent reference with an optional duplicate-name identity key."""
+    # 序列化 agent 时不会保存整个对象，只保存 name/identity。
+    # 反序列化时再从当前进程里的 agent 图里找回对应对象。
     entry: dict[str, Any] = {"name": agent.name}
     if agent_identity_keys_by_id is not None:
         identity = agent_identity_keys_by_id.get(id(agent))
@@ -1246,6 +1305,8 @@ def _serialize_tool_metadata(
     include_params_schema: bool = False,
 ) -> dict[str, Any]:
     """Build a dictionary of tool metadata for serialization."""
+    # 工具元数据要包含 name/namespace/lookupKey。恢复时就是靠这些信息
+    # 从当前 agent 的工具列表中找回原工具对象。
     metadata: dict[str, Any] = {"name": tool.name if hasattr(tool, "name") else None}
     namespace = get_function_tool_namespace(tool)
     if namespace is not None:
@@ -1385,6 +1446,8 @@ def _serialize_tool_action_groups(
     processed_response: ProcessedResponse,
 ) -> dict[str, list[dict[str, Any]]]:
     """Serialize tool-related action groups using a shared spec."""
+    # 这里把不同工具家族统一按 action_specs 序列化，减少重复代码。
+    # 你做自己的 Agent runtime 时，也可以把 render/search/export 等工具动作按同样模式分组。
     action_specs: list[
         tuple[str, list[Any], str, str, bool, bool]
     ] = [  # Key, actions, tool_attr, wrapper_key, include_description, include_params_schema.
@@ -1473,6 +1536,8 @@ def _serialize_pending_nested_agent_tool_runs(
     include_tracing_api_key: bool = False,
 ) -> None:
     """Attach serialized nested run state for pending agent-as-tool interruptions."""
+    # 如果一个 agent 被当作 function tool 调用，且这个子 agent 自己也因审批中断，
+    # 父 RunState 必须把子 RunState 一起塞进 function action，否则恢复后子任务会丢。
     if not function_entries or not function_runs:
         return
 
@@ -1529,6 +1594,7 @@ def _serialize_pending_nested_agent_tool_runs(
 
 class _SerializedAgentToolRunResult:
     """Minimal run-result wrapper used to restore nested agent-as-tool resumptions."""
+    # 这是一个轻量“伪 RunResult”，只为恢复嵌套 agent-tool 的 pending state 服务。
 
     def __init__(self, state: RunState[Any, Agent[Any]]) -> None:
         self._state = state
@@ -1603,6 +1669,7 @@ def _build_named_tool_map(
     tools: Sequence[Any], tool_type: type[Any]
 ) -> dict[NamedToolLookupKey, Any]:
     """Build a name-indexed map for tools of a given type."""
+    # 反序列化工具动作时，需要从当前 agent 的工具列表里按 name/namespace 找回工具对象。
     if tool_type is FunctionTool:
         return cast(
             dict[NamedToolLookupKey, Any],
@@ -1654,6 +1721,8 @@ async def _restore_pending_nested_agent_tool_runs(
     strict_context: bool = False,
 ) -> None:
     """Rehydrate nested agent-as-tool run state into the ephemeral tool-call cache."""
+    # 和 `_serialize_pending_nested_agent_tool_runs` 成对出现：
+    # 这里把 JSON 里的子 RunState 恢复成内存缓存，供续跑时 agent-as-tool 继续执行。
     if not function_entries or not function_runs:
         return
 
@@ -1718,6 +1787,8 @@ async def _deserialize_processed_response(
     Returns:
         A reconstructed ProcessedResponse instance.
     """
+    # 恢复 ProcessedResponse 的难点是：JSON 里只有工具名/调用参数，
+    # 真正可执行的 tool/handoff 对象必须从当前 agent 图重新查找。
     new_items = _deserialize_items(
         processed_response_data.get("new_items", []),
         agent_map,
@@ -1725,6 +1796,7 @@ async def _deserialize_processed_response(
     )
 
     if hasattr(current_agent, "get_all_tools"):
+        # get_all_tools 可能会动态解析 MCP 工具或 deferred tools，所以这里是异步。
         all_tools = await current_agent.get_all_tools(context)
     else:
         all_tools = []
@@ -1760,6 +1832,8 @@ async def _deserialize_processed_response(
         name_resolver: Callable[[Mapping[str, Any]], NamedToolLookupKey | None] | None = None,
     ) -> list[Any]:
         """Deserialize tool actions with shared structure."""
+        # 通用工具动作恢复器：根据 entry 找工具名 -> 从 tool_map 找工具对象 ->
+        # 解析 tool_call -> 构造成 ToolRunXxx。
         deserialized: list[Any] = []
         for entry in entries or []:
             tool_container = entry.get(tool_key, {}) if isinstance(entry, Mapping) else {}
@@ -1809,6 +1883,7 @@ async def _deserialize_processed_response(
             return data
 
     def _deserialize_action_groups() -> dict[str, list[Any]]:
+        # 各类工具动作的恢复规格表，和序列化侧的 action_specs 对称。
         def _resolve_handoff_tool_name(data: Mapping[str, Any]) -> NamedToolLookupKey | None:
             handoff_data = data.get("handoff", {})
             if not isinstance(handoff_data, Mapping):
@@ -2010,6 +2085,8 @@ async def _deserialize_processed_response(
 
 def _deserialize_tool_call_raw_item(normalized_raw_item: Mapping[str, Any]) -> Any:
     """Deserialize a tool call raw item when possible, falling back to the original mapping."""
+    # 反序列化时尽量恢复成 SDK Pydantic 类型；如果类型不认识或校验失败，
+    # 保留 dict，保证旧快照/第三方网关数据不会直接崩掉。
     if not isinstance(normalized_raw_item, Mapping):
         return normalized_raw_item
 
@@ -2056,6 +2133,8 @@ def _deserialize_message_content_part(value: object) -> object:
 
 
 def _deserialize_message_output_item(payload: Mapping[str, Any]) -> ResponseOutputMessage:
+    # 一些历史/网关响应可能缺少 status 字段。能安全构造时用 model_construct 兜底，
+    # 否则继续抛 ValidationError，避免吞掉真正的数据结构错误。
     try:
         return ResponseOutputMessage(**payload)
     except ValidationError as exc:
@@ -2080,6 +2159,7 @@ def _resolve_agent_from_data(
     fallback_agent: Agent[Any] | None = None,
 ) -> Agent[Any] | None:
     """Resolve an agent from serialized data with an optional fallback."""
+    # 优先按 identity 找 agent，其次按 name 找。identity 能解决同名 agent 的恢复歧义。
     agent_name = None
     agent_identity = None
     if isinstance(agent_data, Mapping):
@@ -2374,6 +2454,8 @@ async def _build_run_state_from_json(
     safely, this function warns or raises (in ``strict_context`` mode) rather than silently
     claiming that the rebuilt mapping is equivalent to the original object.
     """
+    # 这是反序列化主流程：校验 schema -> 找回 agent -> 恢复 context/approvals ->
+    # 恢复 responses/items/guardrails/interruption -> 返回可继续 Runner.run 的 RunState。
     schema_version = state_json.get("$schemaVersion")
     if not schema_version:
         raise UserError("Run state is missing schema version")
@@ -2387,6 +2469,7 @@ async def _build_run_state_from_json(
 
     agent_identity_map = _build_agent_identity_map(initial_agent)
     agent_map = _build_agent_map(initial_agent)
+    # `agent_identity_map` 解决同名 agent；`agent_map` 保持老格式按 name 查找的兼容。
 
     current_agent_data = state_json["current_agent"]
     current_agent_name = current_agent_data["name"]
@@ -2446,6 +2529,7 @@ async def _build_run_state_from_json(
         raise UserError("Serialized run state context must be a mapping. Please provide one.")
     context.usage = usage
     context._rebuild_approvals(context_data.get("approvals", {}))
+    # 审批状态恢复后，续跑时工具执行器就能知道之前用户批准/拒绝了哪些调用。
     serialized_tool_input = context_data.get("tool_input")
     if (
         context_override is None
@@ -2481,6 +2565,7 @@ async def _build_run_state_from_json(
 
     state._agent_tool_state_scope_id = uuid4().hex
     set_agent_tool_state_scope(context, state._agent_tool_state_scope_id)
+    # 每次恢复都生成新的 scope，避免和旧运行/并发运行的 agent-tool pending cache 串线。
 
     state._current_turn = state_json["current_turn"]
     state._model_responses = _deserialize_model_responses(state_json.get("model_responses", []))
@@ -2506,6 +2591,7 @@ async def _build_run_state_from_json(
         state._last_processed_response = None
 
     if "session_items" in state_json:
+        # 新版本单独保存 session_items；旧版本没有时，通过 generated + last_processed 合并兜底。
         state._session_items = _deserialize_items(
             state_json.get("session_items", []),
             agent_map,
@@ -2534,6 +2620,7 @@ async def _build_run_state_from_json(
 
     current_step_data = state_json.get("current_step")
     if current_step_data and current_step_data.get("type") == "next_step_interruption":
+        # 恢复“当前停在工具审批”这个状态，用户批准/拒绝后才能继续。
         interruptions: list[ToolApprovalItem] = []
         interruptions_data = current_step_data.get("data", {}).get(
             "interruptions", current_step_data.get("interruptions", [])
@@ -2579,6 +2666,8 @@ async def _build_run_state_from_json(
 
 def _iter_agent_graph(initial_agent: Agent[Any]) -> Iterator[Agent[Any]]:
     """Yield agents reachable from the starting agent in breadth-first order."""
+    # 从根 agent 广度优先遍历所有可达 agent，包括 handoff 目标和 agent-as-tool 目标。
+    # 恢复状态时只能引用当前进程已有的 Python 对象，所以必须先建立这张图。
     queue: deque[Agent[Any]] = deque([initial_agent])
     seen_agent_ids: set[int] = set()
 
@@ -2643,6 +2732,7 @@ def _iter_agent_graph(initial_agent: Agent[Any]) -> Iterator[Agent[Any]]:
                 queue.append(cast(Agent[Any], handoff_agent))
 
         # Include agent-as-tool instances so nested approvals can be restored.
+        # agent.as_tool() 生成的嵌套 agent 不一定在 handoffs 里，也要纳入身份映射。
         tools = getattr(current, "tools", None)
         if tools:
             for tool in tools:
@@ -2676,6 +2766,8 @@ def _callable_identity_name(value: Any) -> str:
 
 
 def _normalize_identity_value(value: Any) -> Any:
+    # 把各种对象规整成稳定、可 JSON dump 的身份片段。
+    # 这里不是为了恢复对象，而是为了在同名 agent 排序时得到稳定签名。
     if value is None or isinstance(value, str | int | float | bool):
         return value
     if isinstance(value, bytes | bytearray):
@@ -2760,6 +2852,8 @@ def _normalize_capability_identity_value(
     *,
     seen: set[int] | None = None,
 ) -> Any:
+    # sandbox/capability 里可能有锁、事件、会话这类运行时对象。
+    # 它们不能作为稳定身份内容，只记录类型或可序列化配置。
     if seen is None:
         seen = set()
 
@@ -2917,6 +3011,8 @@ def _handoff_identity_signature(handoff_item: Agent[Any] | Handoff[Any, Any]) ->
 
 
 def _agent_identity_signature(agent: Agent[Any]) -> str:
+    # 同名 agent 的区分依据：instructions、model、tools、handoffs、guardrails 等配置。
+    # 这不是安全认证，只是为了在同一份 agent 图里生成稳定恢复 key。
     signature: dict[str, Any] = {
         "agent_type": _identity_type_name(agent),
         "handoff_description": getattr(agent, "handoff_description", None),
@@ -2985,6 +3081,8 @@ def _agent_identity_sort_key(
 
 def _build_agent_identity_map(initial_agent: Agent[Any]) -> dict[str, Agent[Any]]:
     """Build a stable identity map that preserves duplicate agent names."""
+    # 如果只有一个 `Researcher`，identity 就是 `Researcher`；
+    # 如果有多个同名 `Researcher`，会分配 `Researcher#2`、`Researcher#3` 等。
     ordered_agents = list(_iter_agent_graph(initial_agent))
     original_indices = {id(agent): index for index, agent in enumerate(ordered_agents)}
     literal_names = {agent.name for agent in ordered_agents}
@@ -3061,6 +3159,8 @@ def _deserialize_model_responses(responses_data: list[dict[str, Any]]) -> list[M
     Returns:
         List of ModelResponse instances.
     """
+    # 模型原始响应也要恢复，因为它用于 trace、usage、last_response_id、
+    # 以及某些 server-managed conversation 的续跑。
 
     result = []
     for resp_data in responses_data:
@@ -3103,6 +3203,8 @@ def _deserialize_items(
     Returns:
         List of RunItem instances.
     """
+    # RunItem 的恢复是整个文件最“分发式”的地方：根据 `type` 字段选择具体 item 类，
+    # 再把 raw_item 尽量恢复成 SDK 类型。
 
     result: list[RunItem] = []
 
@@ -3171,6 +3273,7 @@ def _deserialize_items(
             elif item_type == "tool_call_item":
                 # Tool call items can be function calls, shell calls, apply_patch calls,
                 # MCP calls, etc. Check the type field to determine which type to deserialize as
+                # 工具调用家族很多，统一先恢复 raw_item，再把展示元数据一起带回。
                 raw_item_tool = _deserialize_tool_call_raw_item(normalized_raw_item)
                 # Preserve display metadata if it was stored with the item.
                 description = item_data.get("description")

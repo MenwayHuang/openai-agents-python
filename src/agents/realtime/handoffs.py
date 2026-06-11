@@ -19,6 +19,9 @@ from . import RealtimeAgent
 if TYPE_CHECKING:
     from ..agent import AgentBase
 
+# 学习提示：realtime_handoff 把 RealtimeAgent 包装成 handoff 工具。
+# overload 是给类型检查器看的多个调用签名，真正运行时只会执行最后那个函数实现。
+
 
 # The handoff input type is the type of data passed when the agent is called via a handoff.
 THandoffInput = TypeVar("THandoffInput", default=Any)
@@ -98,6 +101,7 @@ def realtime_handoff(
         if len(sig.parameters) != 2:
             raise UserError("on_handoff must take two arguments: context and input")
 
+        # TypeAdapter 用 Pydantic 为 handoff 输入类型生成校验和 JSON Schema。
         type_adapter = TypeAdapter(input_type)
         input_json_schema = type_adapter.json_schema()
     else:

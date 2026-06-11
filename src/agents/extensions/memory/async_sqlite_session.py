@@ -13,6 +13,8 @@ from ...items import TResponseInputItem
 from ...memory import SessionABC
 from ...memory.session_settings import SessionSettings, resolve_session_limit
 
+# 学习提示：AsyncSQLiteSession 使用 aiosqlite，适合 FastAPI/asyncio 服务里避免阻塞事件循环。
+
 
 class AsyncSQLiteSession(SessionABC):
     """Async SQLite-based implementation of session storage.

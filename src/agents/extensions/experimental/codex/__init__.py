@@ -1,3 +1,9 @@
+"""Experimental Codex 扩展入口。
+
+学习提示：这个扩展把 Codex CLI 包装成 Agents SDK 可调用的能力，属于实验性功能。
+它对当前 PPT Agent 不是主线，后续如果想让 Agent 改代码/改模板，可作为参考。
+"""
+
 from .codex import Codex
 from .codex_options import CodexOptions
 from .codex_tool import (

@@ -19,6 +19,8 @@ Usage::
     )
 
     await Runner.run(agent, "Hello", session=session)
+
+学习提示：DaprSession 把会话历史放到 Dapr state store，适合微服务体系里的统一状态层。
 """
 
 from __future__ import annotations

@@ -1,7 +1,15 @@
+"""调试日志开关。
+
+中文学习说明：
+- 默认不记录模型输入/输出和工具输入/输出，避免泄露用户隐私、业务数据或密钥。
+- 只有本地学习/排查时才建议打开相关环境变量。
+"""
+
 import os
 
 
 def _debug_flag_enabled(flag: str, default: bool = False) -> bool:
+    # 读取布尔环境变量，支持 "1" 和 "true"。
     flag_value = os.getenv(flag)
     if flag_value is None:
         return default

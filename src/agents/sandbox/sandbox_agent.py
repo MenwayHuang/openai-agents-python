@@ -10,6 +10,9 @@ from .capabilities.capabilities import Capabilities
 from .manifest import Manifest
 from .types import User
 
+# 学习提示：SandboxAgent 是带 sandbox 配置的 Agent 子类。
+# 真正的容器/会话运行参数不放在 Agent 上，而是运行时通过 RunConfig(sandbox=...) 注入。
+
 
 @dataclass
 class SandboxAgent(Agent[TContext]):
@@ -40,6 +43,7 @@ class SandboxAgent(Agent[TContext]):
     _sandbox_concurrency_guard: object | None = field(default=None, init=False, repr=False)
 
     def __post_init__(self) -> None:
+        # 先调用 Agent 的 __post_init__ 做通用校验，再检查 sandbox 专属字段。
         super().__post_init__()
         if (
             self.base_instructions is not None

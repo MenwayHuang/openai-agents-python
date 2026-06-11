@@ -1,3 +1,11 @@
+"""模型调用 usage/token 统计。
+
+中文学习说明：
+- Usage 汇总一次 Agent run 里的模型请求次数、输入 token、输出 token、总 token。
+- 它要兼容 Responses API 和 Chat Completions API 的 usage 字段形态，所以有若干 normalize 函数。
+- 对 PPT Agent 来说，usage 是成本统计、限额控制、用户套餐计费和任务审计的基础数据。
+"""
+
 from __future__ import annotations
 
 from collections.abc import Mapping
@@ -12,6 +20,7 @@ from pydantic.dataclasses import dataclass
 
 def deserialize_usage(usage_data: Mapping[str, Any]) -> Usage:
     """Rebuild a Usage object from serialized JSON data."""
+    # RunState 恢复时会用到，把 JSON usage 恢复成 Usage 对象。
     input_tokens_details_raw = usage_data.get("input_tokens_details")
     output_tokens_details_raw = usage_data.get("output_tokens_details")
     input_details = _coerce_token_details(
@@ -81,6 +90,8 @@ def _normalize_input_tokens_details(
     v: InputTokensDetails | PromptTokensDetails | None,
 ) -> InputTokensDetails:
     """Converts None or PromptTokensDetails to InputTokensDetails."""
+    # Pydantic BeforeValidator 会在字段赋值/校验前调用这个函数，
+    # 用来兼容 Chat Completions 的 PromptTokensDetails。
     if v is None:
         return InputTokensDetails(cached_tokens=0)
     if isinstance(v, PromptTokensDetails):
@@ -101,6 +112,7 @@ def _normalize_output_tokens_details(
 
 @dataclass
 class Usage:
+    # Pydantic dataclass，字段上的 Annotated + BeforeValidator 用于自动兼容不同 API 的 usage 类型。
     requests: int = 0
     """Total requests made to the LLM API."""
 

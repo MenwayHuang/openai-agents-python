@@ -12,6 +12,8 @@ from ._error_tracing import attach_error_to_current_span
 
 T = TypeVar("T")
 
+# 学习提示：模型工具参数通常是 JSON 字符串；这里用 Pydantic TypeAdapter 校验并转换成目标类型。
+
 
 def validate_json(json_str: str, type_adapter: TypeAdapter[T], partial: bool) -> T:
     partial_setting: bool | Literal["off", "on", "trailing-strings"] = (

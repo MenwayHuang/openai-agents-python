@@ -11,6 +11,9 @@ from .run import DEFAULT_MAX_TURNS, Runner
 from .run_context import TContext
 from .stream_events import AgentUpdatedStreamEvent, RawResponsesStreamEvent, RunItemStreamEvent
 
+# 学习提示：这是给开发者手动调试 Agent 的命令行 REPL。
+# 它把每轮用户输入追加到 input_items，再调用 Runner；适合快速验证工具调用和 handoff。
+
 
 async def run_demo_loop(
     agent: Agent[Any],
@@ -36,6 +39,7 @@ async def run_demo_loop(
     current_agent = agent
     input_items: list[TResponseInputItem] = []
     while True:
+        # input() 是同步终端输入；这里用于简单 demo，不适合 Web 服务请求处理。
         try:
             user_input = input(" > ")
         except (EOFError, KeyboardInterrupt):
@@ -54,6 +58,7 @@ async def run_demo_loop(
                 current_agent, input=input_items, context=context, max_turns=max_turns
             )
             async for event in result.stream_events():
+                # 流式模式会同时收到原始模型 token、工具调用事件、agent 切换事件。
                 if isinstance(event, RawResponsesStreamEvent):
                     if isinstance(event.data, ResponseTextDeltaEvent):
                         print(event.data.delta, end="", flush=True)
@@ -73,4 +78,5 @@ async def run_demo_loop(
                 print(result.final_output)
 
         current_agent = result.last_agent
+        # to_input_list() 会把本轮输出整理成下一轮可继续传入的历史。
         input_items = result.to_input_list()

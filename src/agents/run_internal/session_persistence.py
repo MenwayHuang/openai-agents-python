@@ -1,6 +1,10 @@
-"""
-Session persistence helpers for the run pipeline. Only internal persistence/retry helpers
-live here; public session interfaces stay in higher-level modules.
+"""Run pipeline 内部的 Session 持久化辅助。
+
+中文学习说明：
+- public Session 协议在 `agents.memory`，这里是 Runner 内部怎么“读历史、拼本轮输入、写回结果”。
+- 重点看 `prepare_input_with_session()` 和 `save_result_to_session()`：
+  前者决定发给模型的上下文，后者决定哪些 item 真正写入 session。
+- 对 PPT Agent 来说，这相当于项目聊天历史/任务日志的写入策略，尤其要学习去重、回滚和重试处理。
 """
 
 from __future__ import annotations
@@ -74,6 +78,8 @@ async def prepare_input_with_session(
     content frequency, so retries and custom merge strategies do not accidentally re-persist
     old history as fresh input.
     """
+    # 一次 Agent turn 的模型输入通常是：历史 session items + 本轮用户输入。
+    # 但如果用户提供 session_input_callback，就允许业务方自定义历史裁剪/重排/过滤。
 
     if session is None:
         return input, []
@@ -98,6 +104,8 @@ async def prepare_input_with_session(
     prune_history_indexes: set[int] = set()
 
     if session_input_callback is None or not include_history_in_prepared_input:
+        # 默认路径：历史和新输入直接拼接。`include_history_in_prepared_input=False`
+        # 时只把本轮新输入发给模型，但仍可能保存新输入。
         prepared_items_raw: list[TResponseInputItem] = (
             converted_history + new_input_list
             if include_history_in_prepared_input
@@ -116,6 +124,7 @@ async def prepare_input_with_session(
         new_items_for_callback = copy.deepcopy(new_input_list)
         combined = session_input_callback(history_for_callback, new_items_for_callback)
         if inspect.isawaitable(combined):
+            # callback 可以是同步函数，也可以是 async 函数；这里统一 await 可等待结果。
             combined = await combined
         if not isinstance(combined, list):
             raise UserError("Session input callback must return a list of input items.")
@@ -123,6 +132,8 @@ async def prepare_input_with_session(
         # The callback may reorder, drop, or duplicate items. Keep separate reference maps for
         # the copied history and copied new-input lists so we can reconstruct which output items
         # belong to the new turn and therefore still need to be persisted.
+        # 这是本函数最细的一段：callback 可能改动列表顺序甚至复制 item，
+        # 所以要用引用和内容频次判断哪些是“新输入”，避免把旧历史重复写入 session。
         history_refs = _build_reference_map(
             history_for_callback,
             ignore_openai_conversation_item_ids=is_openai_conversation_session,
@@ -170,6 +181,7 @@ async def prepare_input_with_session(
 
     # Normalize exactly as the runtime does elsewhere so the prepared model input and the
     # persisted session items are derived from the same item shape and dedupe rules.
+    # 发给模型前统一规范化、丢弃孤儿 function call、按最新版本去重。
     if is_openai_conversation_session and prune_history_indexes:
         prepared_items_raw = _sanitize_openai_conversation_history_items_for_model_input(
             prepared_items_raw,
@@ -198,6 +210,8 @@ async def persist_session_items_for_guardrail_trip(
     """
     Persist input items when a guardrail tripwire is triggered.
     """
+    # 即使输入 guardrail 拦截了请求，也可能需要把用户输入保存到 session，
+    # 否则用户会看到“我发过的话消失了”。服务端 conversation 模式除外。
     if session is None or server_conversation_tracker is not None:
         return session_input_items_for_persistence
 
@@ -214,6 +228,7 @@ async def persist_session_items_for_guardrail_trip(
 
 def session_items_for_turn(turn_result: SingleStepResult) -> list[RunItem]:
     """Return the items to persist for a turn, preferring session_step_items when set."""
+    # 有些流程会专门给 session 准备一份 item；没有时才用普通 new_step_items。
     items = (
         turn_result.session_step_items
         if turn_result.session_step_items is not None
@@ -237,6 +252,8 @@ def update_run_state_after_resume(
     session_items: list[RunItem] | None = None,
 ) -> None:
     """Update run state fields after resolving an interruption."""
+    # 工具审批恢复后，一轮执行会产生新的 generated/session items，
+    # 这里把 RunState 更新到“已经越过中断点”的状态。
     run_state._original_input = copy_input_items(turn_result.original_input)
     run_state._generated_items = generated_items
     if session_items is not None:
@@ -261,6 +278,8 @@ async def save_result_to_session(
     Returns:
         The number of new run items persisted for this call.
     """
+    # 流式模式可能一边生成一边保存，也可能因错误重试。
+    # `_current_turn_persisted_item_count` 用来记住本 turn 已保存多少 item，避免重复写。
     already_persisted = run_state._current_turn_persisted_item_count if run_state else 0
 
     if session is None:
@@ -272,6 +291,7 @@ async def save_result_to_session(
     else:
         new_run_items = new_items[already_persisted:]
     if run_state and new_items and new_run_items:
+        # 如果前面已经保存过一些 tool output，恢复保存时仍要确保缺失的 tool output 被补上。
         missing_outputs = [
             item
             for item in new_items
@@ -318,6 +338,7 @@ async def save_result_to_session(
     ]
 
     items_to_save = deduplicate_input_items_preferring_latest(input_list + new_items_as_input)
+    # 去重后再写 session，避免同一轮重试时保存多个相同输入/工具结果。
 
     if is_openai_conversation_session and items_to_save:
         items_to_save = [_sanitize_openai_conversation_item(item) for item in items_to_save]
@@ -352,6 +373,8 @@ async def save_result_to_session(
         run_state._current_turn_persisted_item_count = already_persisted + saved_run_items_count
 
     if response_id and is_openai_responses_compaction_aware_session(session):
+        # OpenAI Responses compaction 会把长历史压缩。含本地工具输出时先延后，
+        # 因为工具输出常常必须作为精确上下文回传给模型。
         has_local_tool_outputs = any(
             isinstance(item, ToolCallOutputItem | HandoffOutputItem) for item in new_items
         )
@@ -422,6 +445,8 @@ async def rewind_session_items(
     Best-effort helper to roll back items recently persisted to a session when a conversation
     retry is needed, so we do not accumulate duplicate inputs on lock errors.
     """
+    # 发生 conversation lock/retry 这类错误时，刚写入 session 的尾部 item 可能需要撤销，
+    # 否则下一次重试会带着重复上下文。
     if session is None or not items:
         return
 
@@ -526,6 +551,7 @@ async def wait_for_session_cleanup(
     Confirm that rewound items are no longer present in the session tail so the store stays
     consistent before the next retry attempt begins.
     """
+    # 回滚后短暂等待并检查尾部，避免异步存储/远端 session 最终一致性导致下一次重试仍读到旧尾巴。
     if session is None or not serialized_targets:
         return
 
@@ -594,6 +620,8 @@ def _sanitize_openai_conversation_item(item: TResponseInputItem) -> TResponseInp
     identity or encrypted content to remain persistable. Other item IDs remain stripped
     so replayed messages, function calls, and tool outputs do not carry stale provider IDs.
     """
+    # Conversations API 对某些 item 的 id 有要求，但普通 replay item 不应携带旧 provider id。
+    # 这里按类型保留/删除，避免服务端误判上下文身份。
     if isinstance(item, dict):
         clean_item = cast(dict[str, Any], strip_internal_input_item_metadata(item))
         if clean_item.get("type") != "reasoning" and not _openai_conversation_item_requires_id(

@@ -7,6 +7,9 @@ from .items import RealtimeItem
 
 RealtimeConnectionStatus: TypeAlias = Literal["connecting", "connected", "disconnected"]
 
+# 学习提示：这些是模型适配层产生的低层事件，Session 会再把它们翻译成更高层的
+# RealtimeSessionEvent。区分 model event 和 session event 有助于隔离 Provider 差异。
+
 
 @dataclass
 class RealtimeModelErrorEvent:

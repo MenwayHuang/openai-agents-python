@@ -1,3 +1,11 @@
+"""Span 生命周期实现。
+
+中文学习说明：
+- `SpanData` 只定义数据，`SpanImpl` 才负责 start/finish/error/export。
+- `contextvars` 用来在异步任务中保存“当前 span”，避免多并发请求之间串上下文。
+- `NoOpSpan` 让 tracing 关闭时调用代码不需要到处写 if。
+"""
+
 from __future__ import annotations
 
 import abc
@@ -66,6 +74,7 @@ class Span(abc.ABC, Generic[TSpanData]):
         - Include relevant data but avoid sensitive information
         - Handle errors properly using set_error()
     """
+    # Span 是 trace 里的一个时间片段。Generic[TSpanData] 表示这个 span 携带哪种数据结构。
 
     @property
     @abc.abstractmethod
@@ -193,6 +202,8 @@ class NoOpSpan(Span[TSpanData]):
     Args:
         span_data: The operation-specific data for this span.
     """
+    # tracing disabled 时返回 NoOpSpan：代码照样可以 with/start/finish，
+    # 但不会记录或导出任何数据。
 
     __slots__ = ("_span_data", "_prev_span_token")
 
@@ -217,6 +228,7 @@ class NoOpSpan(Span[TSpanData]):
         return None
 
     def start(self, mark_as_current: bool = False):
+        # 即使不记录数据，也要正确维护当前上下文，避免下游代码拿 current_span 出错。
         if mark_as_current:
             self._prev_span_token = Scope.set_current_span(self)
 
@@ -261,6 +273,7 @@ class NoOpSpan(Span[TSpanData]):
 
 
 class SpanImpl(Span[TSpanData]):
+    # 真正会记录的 Span 实现。processor 负责把 start/end 事件送给后端或本地缓冲。
     __slots__ = (
         "_trace_id",
         "_span_id",
@@ -314,6 +327,7 @@ class SpanImpl(Span[TSpanData]):
         return self._parent_id
 
     def start(self, mark_as_current: bool = False):
+        # start 时打开始时间，并通知 TracingProcessor。
         if self.started_at is not None:
             logger.warning("Span already started")
             return
@@ -321,9 +335,11 @@ class SpanImpl(Span[TSpanData]):
         self._started_at = util.time_iso()
         self._processor.on_span_start(self)
         if mark_as_current:
+            # Scope 基于 contextvars 保存当前 span，支持 async 并发隔离。
             self._prev_span_token = Scope.set_current_span(self)
 
     def finish(self, reset_current: bool = False) -> None:
+        # finish 时打结束时间，并通知 processor。reset_current 会恢复进入 span 前的上下文。
         if self.ended_at is not None:
             logger.warning("Span already finished")
             return
@@ -335,6 +351,7 @@ class SpanImpl(Span[TSpanData]):
             self._prev_span_token = None
 
     def __enter__(self) -> Span[TSpanData]:
+        # context manager 用法：`with span:` 自动 start/finish。
         self.start(mark_as_current=True)
         return self
 
@@ -347,6 +364,7 @@ class SpanImpl(Span[TSpanData]):
         self.finish(reset_current=reset_current)
 
     def set_error(self, error: SpanError) -> None:
+        # 异常不会自动塞进 span，调用方需要在 except 里 set_error。
         self._error = error
 
     @property
@@ -370,6 +388,7 @@ class SpanImpl(Span[TSpanData]):
         return self._trace_metadata
 
     def export(self) -> dict[str, Any] | None:
+        # 导出成统一 payload，processor 可以上报到 OpenAI tracing 或其他观测系统。
         payload = {
             "object": "trace.span",
             "id": self.span_id,

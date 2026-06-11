@@ -5,6 +5,8 @@ from .litellm_model import LitellmModel
 # This is kept for backward compatibility but using get_default_model() method is recommended.
 DEFAULT_MODEL: str = "gpt-4.1"
 
+# 学习提示：LitellmProvider 是很薄的工厂类，真正复杂度在 LitellmModel。
+
 
 class LitellmProvider(ModelProvider):
     """A ModelProvider that uses LiteLLM to route to any model provider. You can use it via:

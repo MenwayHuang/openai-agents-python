@@ -1,5 +1,14 @@
 from __future__ import annotations
 
+# 中文学习注释：
+# 这个文件是公开运行入口，负责把 Agent 配置真正跑起来。
+# 你平时调用的 Runner.run / Runner.run_sync / Runner.run_streamed 都从这里进入。
+# 重要分层：
+# - Runner：静态门面，给业务代码调用；
+# - AgentRunner：真正执行 run loop 的对象；
+# - run_internal/run_loop.py：单轮模型调用、工具执行和 next step 解析；
+# - RunState：中断/审批后恢复运行所需的状态快照。
+
 import asyncio
 import contextlib
 import warnings
@@ -126,6 +135,8 @@ from .util import _error_tracing
 
 DEFAULT_AGENT_RUNNER: AgentRunner = None  # type: ignore
 # the value is set at the end of the module
+# 这里先写 None 是因为 AgentRunner 类还没定义。
+# 文件底部会创建默认 runner；type: ignore 是告诉类型检查器接受这个临时不匹配。
 
 __all__ = [
     "AgentRunner",
@@ -153,6 +164,7 @@ def set_default_agent_runner(runner: AgentRunner | None) -> None:
     WARNING: this class is experimental and not part of the public API
     It should not be used directly.
     """
+    # SDK 内部允许替换默认 runner，便于实验/测试不同 runner 实现。
     global DEFAULT_AGENT_RUNNER
     DEFAULT_AGENT_RUNNER = runner or AgentRunner()
 
@@ -172,6 +184,8 @@ def _sandbox_memory_rollout_id(
     conversation_id: str | None,
     session: Session | None,
 ) -> str | None:
+    # sandbox 记忆实验能力：根据 conversation/session/group 生成一次 rollout 的分组 ID。
+    # 当前 PPT 项目暂时不需要深挖，可理解为“沙箱运行的记忆归档标识”。
     if run_config.sandbox is None:
         return None
     return resolve_run_grouping_id(
@@ -195,6 +209,9 @@ def _sandbox_memory_input(
 
 
 class Runner:
+    # Runner 是用户最常接触的“静态门面”。
+    # 它不保存状态，只把调用转给 DEFAULT_AGENT_RUNNER。
+
     @classmethod
     async def run(
         cls,
@@ -265,6 +282,7 @@ class Runner:
         """
 
         runner = DEFAULT_AGENT_RUNNER
+        # 真正逻辑在 AgentRunner.run；Runner 只是为了提供简洁 API。
         return await runner.run(
             starting_agent,
             input,
@@ -347,6 +365,7 @@ class Runner:
         """
 
         runner = DEFAULT_AGENT_RUNNER
+        # 同步模式适合脚本/CLI；FastAPI 等已有事件循环的环境应使用 await Runner.run(...)。
         return runner.run_sync(
             starting_agent,
             input,
@@ -426,6 +445,7 @@ class Runner:
         """
 
         runner = DEFAULT_AGENT_RUNNER
+        # 流式模式会立即返回 RunResultStreaming，后台任务持续把事件写入队列。
         return runner.run_streamed(
             starting_agent,
             input,
@@ -446,6 +466,8 @@ class AgentRunner:
     WARNING: this class is experimental and not part of the public API
     It should not be used directly or subclassed.
     """
+    # AgentRunner 是本文件真正的执行器。
+    # 它维护 turn 计数、当前 agent、session 持久化、trace、RunState 恢复等运行时状态。
 
     async def run(
         self,
@@ -453,6 +475,12 @@ class AgentRunner:
         input: str | list[TResponseInputItem] | RunState[TContext],
         **kwargs: Unpack[RunOptions[TContext]],
     ) -> RunResult:
+        # 非流式主入口。整体执行结构：
+        # 1. 解析输入/恢复状态/session/conversation；
+        # 2. 创建 trace/task span；
+        # 3. while True 按 turn 调用 run_single_turn；
+        # 4. 根据 NextStep 决定 final/handoff/interruption/run_again；
+        # 5. 收尾保存 session、释放 computer/sandbox 资源。
         context = kwargs.get("context")
         max_turns = kwargs.get("max_turns", DEFAULT_MAX_TURNS)
         hooks = cast(RunHooks[TContext], validate_run_hooks(kwargs.get("hooks")))
@@ -467,6 +495,8 @@ class AgentRunner:
             run_config = RunConfig()
 
         is_resumed_state = isinstance(input, RunState)
+        # input 可以是普通用户输入，也可以是之前中断保存下来的 RunState。
+        # RunState 路径用于工具审批、人工介入后继续执行。
         run_state: RunState[TContext] | None = None
         starting_input = input if not is_resumed_state else None
         original_user_input: str | list[TResponseInputItem] | None = None
@@ -478,6 +508,7 @@ class AgentRunner:
         last_saved_input_snapshot_for_rewind: list[TResponseInputItem] | None = None
 
         if is_resumed_state:
+            # 恢复运行：从 RunState 取回原始输入、上下文、turn 计数、模型响应等。
             run_state = cast(RunState[TContext], input)
             (
                 conversation_id,
@@ -507,6 +538,7 @@ class AgentRunner:
 
             max_turns = run_state._max_turns
         else:
+            # 首次运行：准备用户输入，并按 session/conversation 模式决定是否拼历史。
             raw_input = cast(str | list[TResponseInputItem], input)
             original_user_input = raw_input
 
@@ -524,6 +556,8 @@ class AgentRunner:
             )
 
             if server_manages_conversation:
+                # OpenAI server-managed conversation 模式：服务端保存历史，
+                # 本地输入不再重复拼完整 session history。
                 prepared_input, _ = await prepare_input_with_session(
                     raw_input,
                     session,
@@ -535,6 +569,7 @@ class AgentRunner:
                 original_input_for_state = raw_input
                 session_input_items_for_persistence = []
             else:
+                # 普通 session 模式：SDK 从 session 读取历史，与本轮输入拼成模型输入。
                 (
                     prepared_input,
                     session_input_items_for_persistence,
@@ -560,6 +595,7 @@ class AgentRunner:
             or previous_response_id is not None
             or auto_previous_response_id
         ):
+            # OpenAI Responses API 的 conversation/previous_response_id 让服务端接管上下文串联。
             server_conversation_tracker = OpenAIServerConversationTracker(
                 conversation_id=conversation_id,
                 previous_response_id=previous_response_id,
@@ -612,6 +648,7 @@ class AgentRunner:
             trace_state=run_state._trace_state if run_state is not None else None,
             reattach_resumed_trace=is_resumed_state,
         ):
+            # TraceCtxManager 会把当前 trace 放入上下文变量，内部 span 能自动挂到同一条 trace 下。
             if is_resumed_state and run_state is not None:
                 run_state.set_trace(get_current_trace())
                 current_turn = run_state._current_turn
@@ -623,6 +660,7 @@ class AgentRunner:
                 # Cast to the correct type since we know this is TContext
                 context_wrapper = cast(RunContextWrapper[TContext], run_state._context)
             else:
+                # 新运行创建 RunState。即使本次不需要中断，它也会记录足够信息供之后恢复。
                 current_turn = 0
                 original_input = copy_input_items(original_input_for_state)
                 generated_items = []
@@ -643,6 +681,7 @@ class AgentRunner:
                 run_state.set_trace(get_current_trace())
 
             current_task_span: Span[TaskSpanData] = task_span(name=trace_workflow_name)
+            # task_span 包住整个 Runner.run，agent_span/turn_span 会嵌在里面。
             current_task_span.start(mark_as_current=True)
             task_usage_start = snapshot_usage(context_wrapper.usage)
 
@@ -665,12 +704,14 @@ class AgentRunner:
                 run_exception: BaseException | None = None
 
                 def _with_reasoning_item_id_policy(result: RunResult) -> RunResult:
+                    # reasoning item id policy 影响推理项在多轮中的保留/回放策略。
                     result._reasoning_item_id_policy = resolved_reasoning_item_id_policy
                     if run_state is not None:
                         run_state._reasoning_item_id_policy = resolved_reasoning_item_id_policy
                     return result
 
                 def _tool_use_tracker_snapshot() -> dict[str, list[str]]:
+                    # tool_use_tracker 用来记录工具使用历史，辅助 reset_tool_choice 防止工具死循环。
                     identity_root_agent = starting_agent
                     if run_state is not None and run_state._starting_agent is not None:
                         identity_root_agent = run_state._starting_agent
@@ -680,6 +721,7 @@ class AgentRunner:
                     )
 
                 def _finalize_result(result: RunResult) -> RunResult:
+                    # 统一收尾：同步 conversation tracking、写 sandbox 元数据、保存 prompt cache key。
                     nonlocal completed_result
                     result._starting_agent_for_state = (
                         run_state._starting_agent
@@ -720,6 +762,7 @@ class AgentRunner:
                     and run_state is not None
                     and run_state._current_agent is not None
                 ):
+                    # 恢复时可能已经 handoff 到别的 agent，所以当前 agent 要以 RunState 为准。
                     current_agent = run_state._current_agent
                 else:
                     current_agent = starting_agent
@@ -745,6 +788,7 @@ class AgentRunner:
                     and session_input_items_for_persistence
                     and not sandbox_runtime.enabled
                 ):
+                    # 先把用户输入写入 session。后面如果模型请求失败并重试，可以按 snapshot 回滚。
                     # Capture the exact input saved so it can be rewound on conversation
                     # lock retries.
                     last_saved_input_snapshot_for_rewind = list(session_input_items_for_persistence)
@@ -766,6 +810,7 @@ class AgentRunner:
 
             try:
                 while True:
+                    # 非流式 run 的主循环。每轮最多调用一次模型，然后根据模型结果执行工具/交接/结束。
                     resuming_turn = is_resumed_state
                     all_input_guardrails = (
                         starting_agent.input_guardrails + (run_config.input_guardrails or [])
@@ -839,6 +884,8 @@ class AgentRunner:
                         session_input_items_for_persistence = []
                     if run_state is not None and run_state._current_step is not None:
                         if isinstance(run_state._current_step, NextStepInterruption):
+                            # 上一次运行因审批/中断停在工具执行后，这里不重新调用模型，
+                            # 而是拿上次模型响应和 processed_response 继续执行未完成的 side effects。
                             logger.debug("Continuing from interruption")
                             if (
                                 not run_state._model_responses
@@ -901,6 +948,7 @@ class AgentRunner:
                             is_resumed_state = False
 
                             if isinstance(turn_result.next_step, NextStepInterruption):
+                                # 仍然有未审批项，继续返回 interruption result 给调用方。
                                 interruption_result_input: str | list[TResponseInputItem] = (
                                     original_input
                                 )
@@ -946,6 +994,7 @@ class AgentRunner:
                                 return _finalize_result(result)
 
                             if isinstance(turn_result.next_step, NextStepRunAgain):
+                                # 工具执行完成，但还需要把工具结果送回模型再跑一轮。
                                 continue
 
                             append_model_response_if_new(
@@ -959,6 +1008,7 @@ class AgentRunner:
                             )
 
                             if isinstance(turn_result.next_step, NextStepFinalOutput):
+                                # 恢复后直接拿到了最终输出，进入输出 guardrail 和 RunResult 组装。
                                 output_guardrail_results = await run_output_guardrails(
                                     current_agent.output_guardrails
                                     + (run_config.output_guardrails or []),
@@ -1009,6 +1059,7 @@ class AgentRunner:
                                 result._original_input = copy_input_items(original_input)
                                 return _finalize_result(result)
                             elif isinstance(turn_result.next_step, NextStepHandoff):
+                                # 恢复后发生 handoff，切换 current_agent，下一轮使用新 agent。
                                 current_agent = cast(
                                     Agent[TContext], turn_result.next_step.new_agent
                                 )
@@ -1031,6 +1082,7 @@ class AgentRunner:
                     await initialize_computer_tools(
                         tools=all_tools, context_wrapper=context_wrapper
                     )
+                    # 每轮都重新取 tools，因为 MCP/dynamic is_enabled/tool choice 可能随 context 变化。
 
                     if current_span is None:
                         handoff_names = [
@@ -1056,6 +1108,7 @@ class AgentRunner:
 
                     current_turn += 1
                     if max_turns is not None and current_turn > max_turns:
+                        # 防止 agent 因工具调用/模型反复请求进入无限循环。
                         _error_tracing.attach_error_to_span(
                             current_span,
                             SpanError(
@@ -1170,6 +1223,8 @@ class AgentRunner:
                     current_turn_span.start(mark_as_current=True)
                     try:
                         if current_turn <= 1:
+                            # input guardrail 只在第一轮跑。
+                            # 这里把 sequential guardrails 和模型调用顺序处理，parallel guardrails 可与模型并发。
                             try:
                                 if sequential_guardrails:
                                     sequential_results = await run_input_guardrails(
@@ -1193,6 +1248,7 @@ class AgentRunner:
 
                             parallel_results: list[InputGuardrailResult] = []
                             model_task = asyncio.create_task(
+                                # 第一轮模型调用可与 parallel guardrails 并发执行，提高响应速度。
                                 run_single_turn(
                                     bindings=current_bindings,
                                     all_tools=all_tools,
@@ -1278,14 +1334,17 @@ class AgentRunner:
                         current_turn_span.finish(reset_current=True)
 
                     # Start hooks should only run on the first turn unless reset by a handoff.
+                    # handoff 后新 agent 会重新触发 on_agent_start。
                     last_saved_input_snapshot_for_rewind = None
                     should_run_agent_start_hooks = False
 
                     model_responses.append(turn_result.model_response)
                     original_input = turn_result.original_input
                     # For model input, use new_step_items (filtered on handoffs).
+                    # generated_items 是下一轮模型实际看到的“历史/工具结果”。
                     generated_items = turn_result.pre_step_items + turn_result.new_step_items
                     # Accumulate unfiltered items for observability.
+                    # session_items 则更偏审计/展示/持久化，可能包含 handoff call 等观测项。
                     turn_session_items = session_items_for_turn(turn_result)
                     session_items.extend(turn_session_items)
                     if server_conversation_tracker is not None:
@@ -1365,6 +1424,7 @@ class AgentRunner:
 
                     try:
                         if isinstance(turn_result.next_step, NextStepFinalOutput):
+                            # 最终输出路径：跑 output guardrails，组装 RunResult，必要时写 session。
                             output_guardrail_results = await run_output_guardrails(
                                 current_agent.output_guardrails
                                 + (run_config.output_guardrails or []),
@@ -1413,6 +1473,7 @@ class AgentRunner:
                             result._original_input = copy_input_items(original_input)
                             return _finalize_result(result)
                         elif isinstance(turn_result.next_step, NextStepInterruption):
+                            # 中断路径：把当前模型响应、已生成 items、审批项写入 RunState，返回给调用方。
                             if session_persistence_enabled:
                                 if not input_guardrails_triggered(input_guardrail_results):
                                     # Persist session items but skip approval placeholders.
@@ -1470,6 +1531,7 @@ class AgentRunner:
                             )
                             return _finalize_result(result)
                         elif isinstance(turn_result.next_step, NextStepHandoff):
+                            # handoff 路径：切换 agent，然后 while True 继续下一轮。
                             current_agent = cast(Agent[TContext], turn_result.next_step.new_agent)
                             if run_state is not None:
                                 run_state._current_agent = current_agent
@@ -1481,6 +1543,7 @@ class AgentRunner:
                             current_span = None
                             should_run_agent_start_hooks = True
                         elif isinstance(turn_result.next_step, NextStepRunAgain):
+                            # 工具调用后常见路径：保存本轮工具结果，下一轮把结果发回模型。
                             await save_turn_items_if_needed(
                                 session=session,
                                 run_state=run_state,
@@ -1567,6 +1630,8 @@ class AgentRunner:
         input: str | list[TResponseInputItem] | RunState[TContext],
         **kwargs: Unpack[RunOptions[TContext]],
     ) -> RunResult:
+        # 同步包装：把 async run 放到事件循环里跑完。
+        # 注意：如果当前线程已经有运行中的 event loop，例如 FastAPI/Jupyter，就不能用这个方法。
         context = kwargs.get("context")
         max_turns = kwargs.get("max_turns", DEFAULT_MAX_TURNS)
         hooks = kwargs.get("hooks")
@@ -1611,6 +1676,7 @@ class AgentRunner:
         # the same default loop every time run_sync is invoked on this thread.
         # Schedule the async run on the default loop so that we can manage cancellation explicitly.
         task = default_loop.create_task(
+            # 显式创建 task，方便异常/KeyboardInterrupt 时取消并等待清理。
             self.run(
                 starting_agent,
                 input,
@@ -1650,6 +1716,8 @@ class AgentRunner:
         input: str | list[TResponseInputItem] | RunState[TContext],
         **kwargs: Unpack[RunOptions[TContext]],
     ) -> RunResultStreaming:
+        # 流式入口会创建 RunResultStreaming，然后启动后台 task。
+        # 调用方通过 result.stream_events() 读取事件；不是等完整 final_output 后才返回。
         context = kwargs.get("context")
         max_turns = kwargs.get("max_turns", DEFAULT_MAX_TURNS)
         hooks = cast(RunHooks[TContext], validate_run_hooks(kwargs.get("hooks")))
@@ -1664,6 +1732,7 @@ class AgentRunner:
             run_config = RunConfig()
 
         # Handle RunState input
+        # 流式模式也支持从 RunState 恢复，逻辑和非流式类似。
         is_resumed_state = isinstance(input, RunState)
         run_state: RunState[TContext] | None = None
         input_for_result: str | list[TResponseInputItem]

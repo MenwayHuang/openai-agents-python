@@ -1,5 +1,14 @@
 from __future__ import annotations
 
+# 中文学习注释：
+# 这个文件负责把 ProcessedResponse 转成 ToolExecutionPlan。
+# 它不直接执行工具，而是决定：
+# - 哪些工具可以马上执行；
+# - 哪些工具需要等待审批；
+# - 哪些审批已经通过/拒绝；
+# - 恢复运行时哪些工具输出已经存在，不能重复执行。
+# 这类“计划层”对自研 agent runtime 很重要，可以把副作用执行和状态判断拆开。
+
 import asyncio
 import dataclasses as _dc
 import inspect
@@ -68,6 +77,8 @@ __all__ = [
 
 def _hashable_identity_value(value: Any) -> Hashable | None:
     """Convert a tool call field into a stable, hashable representation."""
+    # tool call 有时缺少 call_id，只能用 name + arguments/input 做去重。
+    # dict/list 不可 hash，所以先转成稳定 JSON 字符串。
     if value is None:
         return None
     if isinstance(value, dict | list | tuple):
@@ -82,6 +93,8 @@ def _hashable_identity_value(value: Any) -> Hashable | None:
 
 def _tool_call_identity(raw: Any) -> tuple[str | None, str | None, Hashable | None]:
     """Return a tuple that identifies a tool call when call_id/id may be missing."""
+    # 这是弱身份标识：优先 call_id/id，其次 name 和 arguments/input。
+    # 用于防止恢复/重放时重复添加同一条 tool_call item。
     call_id = getattr(raw, "call_id", None) or getattr(raw, "id", None)
     name = getattr(raw, "name", None)
     args = getattr(raw, "arguments", None)
@@ -103,8 +116,11 @@ async def execute_mcp_approval_requests(
     context_wrapper: RunContextWrapper[Any],
 ) -> list[RunItem]:
     """Run hosted MCP approval callbacks and return approval response items."""
+    # Hosted MCP 支持 on_approval_request 自动审批回调。
+    # 这里把 callback 结果转成 mcp_approval_response item 发回模型服务。
 
     async def run_single_approval(approval_request: ToolRunMCPApprovalRequest) -> RunItem:
+        # 单个 MCP approval callback 可以是同步也可以是 async。
         callback = approval_request.mcp_tool.on_approval_request
         assert callback is not None, "Callback is required for MCP approval requests"
         maybe_awaitable_result = callback(
@@ -139,6 +155,7 @@ async def execute_mcp_approval_requests(
 
 def _build_tool_output_index(items: Sequence[RunItem]) -> set[tuple[str, str]]:
     """Index tool call output items by (type, call_id) for fast lookups."""
+    # 恢复执行时，先建立已有输出索引，避免 shell/apply_patch/function 等副作用重复执行。
     index: set[tuple[str, str]] = set()
     for item in items:
         if not isinstance(item, ToolCallOutputItem):
@@ -159,6 +176,8 @@ def _dedupe_tool_call_items(
     *, existing_items: Sequence[RunItem], new_items: Sequence[RunItem]
 ) -> list[RunItem]:
     """Return new items while skipping tool call duplicates already seen by identity."""
+    # 有些 provider/retry/resume 场景会让同一个 tool call item 再次出现。
+    # 这里只去重 tool call 本身，不去重普通 message/reasoning。
     existing_call_keys: set[tuple[str | None, str | None, Hashable | None]] = set()
     for item in existing_items:
         if isinstance(item, ToolCallItem):
@@ -177,6 +196,8 @@ def _dedupe_tool_call_items(
 @_dc.dataclass
 class ToolExecutionPlan:
     """Represents tool execution work to perform in a single turn."""
+    # ToolExecutionPlan 是“本轮要执行什么”的集中描述。
+    # turn_resolution 根据它调用 _execute_tool_plan，工具执行完再决定 NextStep。
 
     function_runs: list[ToolRunFunction] = _dc.field(default_factory=list)
     computer_actions: list[ToolRunComputerAction] = _dc.field(default_factory=list)
@@ -197,6 +218,7 @@ def _partition_mcp_approval_requests(
     requests: Sequence[ToolRunMCPApprovalRequest],
 ) -> tuple[list[ToolRunMCPApprovalRequest], list[ToolRunMCPApprovalRequest]]:
     """Split MCP approval requests into callback-handled and manual buckets."""
+    # 有 on_approval_request 的 MCP 请求可以自动处理；没有的要作为 interruption 暴露给调用方。
     with_callback: list[ToolRunMCPApprovalRequest] = []
     manual: list[ToolRunMCPApprovalRequest] = []
     for request in requests:
@@ -216,6 +238,9 @@ def _collect_mcp_approval_plan(
     pending_interruption_adder: Callable[[ToolApprovalItem], None],
 ) -> tuple[list[ToolRunMCPApprovalRequest], list[RunItem]]:
     """Return MCP approval callback requests and approved responses."""
+    # MCP 审批计划分两类：
+    # - callback 自动审批，稍后执行；
+    # - manual 审批，如果已有 approve/reject 结果就生成 response，否则 pending。
     approved_mcp_responses: list[RunItem] = []
     (
         mcp_requests_with_callback,
@@ -241,6 +266,7 @@ def _build_plan_for_fresh_turn(
     approval_items_by_call_id: Mapping[str, ToolApprovalItem],
 ) -> ToolExecutionPlan:
     """Build a ToolExecutionPlan for a fresh turn."""
+    # fresh turn：模型刚返回的工具调用都还没执行过，直接把 processed_response 里的待执行项放入计划。
     pending_interruptions: list[ToolApprovalItem] = []
     mcp_requests_with_callback, approved_mcp_responses = _collect_mcp_approval_plan(
         processed_response=processed_response,
@@ -278,6 +304,8 @@ def _build_plan_for_resume_turn(
     apply_patch_calls: list[ToolRunApplyPatchCall],
 ) -> ToolExecutionPlan:
     """Build a ToolExecutionPlan for a resumed turn."""
+    # resume turn：调用方已经处理过一批审批。
+    # 这里的 function_runs/shell_calls 等由 turn_resolution 先过滤过，只包含仍需执行的项。
     mcp_requests_with_callback, approved_mcp_responses = _collect_mcp_approval_plan(
         processed_response=processed_response,
         agent=agent,
@@ -307,6 +335,8 @@ def _collect_tool_interruptions(
     apply_patch_results: Sequence[RunItem],
 ) -> list[ToolApprovalItem]:
     """Collect tool approval interruptions from tool results."""
+    # 工具执行结果可能不是最终 output，而是 ToolApprovalItem。
+    # Agent-as-tool 还可能把子 Agent 的 interruptions 冒泡出来。
     interruptions: list[ToolApprovalItem] = []
     for result in function_results:
         if isinstance(result.run_item, ToolApprovalItem):
@@ -341,6 +371,8 @@ def _build_tool_result_items(
     local_shell_results: Sequence[RunItem] | None = None,
 ) -> list[RunItem]:
     """Build ordered tool result items for inclusion in new step items."""
+    # 把不同工具执行器返回的结果统一合并成 RunItem 列表。
+    # FunctionToolResult 里真正要写入历史的是 run_item。
     results: list[RunItem] = []
     for result in function_results:
         run_item = getattr(result, "run_item", None)
@@ -359,6 +391,7 @@ def _make_unique_item_appender(
     existing_items: Sequence[RunItem],
 ) -> tuple[list[RunItem], Callable[[RunItem], None]]:
     """Return (items, append_fn) that skips duplicates by object identity."""
+    # 恢复流程里会从多个来源补 item，用对象 id 去重可以避免同一个 RunItem 重复进入 new_items。
     existing_ids = {id(item) for item in existing_items}
     new_items: list[RunItem] = []
     new_item_ids: set[int] = set()
@@ -387,6 +420,8 @@ async def _collect_runs_by_approval(
     output_exists_checker: Callable[[str], bool] | None = None,
 ) -> tuple[list[T], list[RunItem]]:
     """Return approved runs and rejection items, adding pending approvals via callback."""
+    # 通用审批过滤器：shell/custom/apply_patch 等都可以复用。
+    # 返回值分为“已批准可执行的 runs”和“拒绝后要写给模型的 rejection items”。
     approved_runs: list[T] = []
     rejection_items: list[RunItem] = []
     for run in runs:
@@ -400,9 +435,11 @@ async def _collect_runs_by_approval(
         )
 
         if output_exists_checker and output_exists_checker(call_id):
+            # 已经有输出说明这个副作用执行过了，恢复时必须跳过。
             continue
 
         if approval_status is False:
+            # 用户拒绝：不执行工具，生成 rejection item 作为模型可见工具结果。
             rejection = rejection_builder(run, call_id)
             if inspect.isawaitable(rejection):
                 rejection_item = await cast(Awaitable[RunItem], rejection)
@@ -421,10 +458,12 @@ async def _collect_runs_by_approval(
                 needs_approval = True
 
         if not needs_approval:
+            # 工具配置不需要审批，直接进入执行计划。
             approved_runs.append(run)
             continue
 
         if approval_status is True:
+            # 用户已批准，进入执行计划。
             approved_runs.append(run)
         else:
             function_tool = get_mapping_or_attr(run, "function_tool")
@@ -476,6 +515,7 @@ async def _append_mcp_callback_results(
     append_item: Callable[[RunItem], None],
 ) -> None:
     """Execute MCP approval callbacks and append results when present."""
+    # MCP callback 审批结果需要追加到 new_step_items，供下一轮模型读取。
     if not requests:
         return
     approval_results = await execute_mcp_approval_requests(
@@ -501,6 +541,8 @@ async def _select_function_tool_runs_for_resume(
     pending_item_builder: Callable[[ToolRunFunction], ToolApprovalItem],
 ) -> list[ToolRunFunction]:
     """Filter function tool runs during resume, honoring approvals and outputs."""
+    # FunctionTool 的恢复比普通工具更复杂：
+    # 它可能是 agent-as-tool，有 nested interruptions；也可能有 namespace/lookup key。
     selected: list[ToolRunFunction] = []
     for run in runs:
         call_id = run.tool_call.call_id
@@ -558,6 +600,9 @@ async def _execute_tool_plan(
     list[RunItem],
 ]:
     """Execute tool runs captured in a ToolExecutionPlan."""
+    # 执行计划的统一入口。默认并发执行不同工具类别：
+    # FunctionTool、computer、custom、shell、apply_patch、local_shell。
+    # FunctionTool 内部还有自己的并发控制和失败仲裁。
     public_agent = bindings.public_agent
     isolate_function_tool_failures = len(plan.function_runs) > 1 or (
         parallel
@@ -570,6 +615,7 @@ async def _execute_tool_plan(
         )
     )
     if parallel:
+        # asyncio.gather 并发跑不同工具类别；结果按固定顺序拆回。
         (
             (function_results, tool_input_guardrail_results, tool_output_guardrail_results),
             computer_results,

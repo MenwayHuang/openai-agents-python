@@ -1,3 +1,12 @@
+"""工具调用专用上下文。
+
+中文学习说明：
+- 普通 RunContextWrapper 只有业务 context、usage、审批状态；ToolContext 额外带工具名、
+  call_id、原始 arguments、当前 agent、run_config。
+- FunctionTool hooks、工具 guardrail、工具实现本身可以通过它知道“我现在是哪个工具调用”。
+- 对 PPT Agent 来说，执行 render_ppt/search_image/save_project 这类工具时，很适合传入类似上下文。
+"""
+
 from __future__ import annotations
 
 from dataclasses import dataclass, field, fields
@@ -35,6 +44,7 @@ _MISSING = object()
 @dataclass(eq=False)
 class ToolContext(RunContextWrapper[TContext]):
     """The context of a tool call."""
+    # 继承 RunContextWrapper，所以工具里仍能访问业务 context、usage 和审批表。
 
     tool_name: str = field(default_factory=_assert_must_pass_tool_name)
     """The name of the tool being invoked."""
@@ -74,6 +84,7 @@ class ToolContext(RunContextWrapper[TContext]):
         tool_input: Any | None = None,
     ) -> None:
         """Preserve the v0.7 positional constructor while accepting new context fields."""
+        # 这里手写 __init__ 是为了兼容旧版本位置参数，同时支持新增字段。
         resolved_usage = Usage() if usage is _MISSING else cast(Usage, usage)
         super().__init__(
             context=context,
@@ -125,6 +136,8 @@ class ToolContext(RunContextWrapper[TContext]):
         """
         Create a ToolContext from a RunContextWrapper.
         """
+        # 工具执行前把普通 run context 派生成 ToolContext，并共享 approvals/usage/turn_input。
+        # 这样工具调用既有全局运行上下文，又有本次 tool_call 的元数据。
         # Grab the names of the RunContextWrapper's init=True fields
         base_values: dict[str, Any] = {
             f.name: getattr(context, f.name) for f in fields(RunContextWrapper) if f.init

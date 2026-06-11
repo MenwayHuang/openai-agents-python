@@ -1,6 +1,9 @@
-"""
-Tool-use tracking utilities. Hosts AgentToolUseTracker and helpers to serialize/deserialize
-its state plus lightweight tool-call type utilities. Internal use only.
+"""工具使用记录器。
+
+中文学习说明：
+- Agent 运行中需要知道“某个 agent 本轮是否已经用过工具”，从而决定是否重置 tool_choice。
+- 这个状态要能序列化进 RunState，否则中断恢复后会忘记之前用过哪些工具。
+- 对 PPT Agent 来说，如果你实现“某些工具调用后必须重新让模型自由选择下一步”，可以学习这个模式。
 """
 
 from __future__ import annotations
@@ -49,6 +52,8 @@ _PROCESSED_RESPONSE_TOOL_ITEM_TYPES = (
 
 class AgentToolUseTracker:
     """Track which tools an agent has used to support model_settings resets."""
+    # 同时维护 name-keyed 和 instance-keyed 两套数据：
+    # name-keyed 方便序列化，instance-keyed 方便运行时按对象精确判断。
 
     def __init__(self) -> None:
         # Name-keyed map is used for serialization/hydration only.
@@ -67,6 +72,7 @@ class AgentToolUseTracker:
         self, agent: Agent[Any], processed_response: ProcessedResponse
     ) -> None:
         """Track resettable tool usage from a processed model response."""
+        # ProcessedResponse.tools_used 和 new_items 顺序相关，这里按 item 顺序提取本轮实际工具使用。
         tool_name_iter = iter(processed_response.tools_used)
         tool_names: list[str] = []
         for item in processed_response.new_items:

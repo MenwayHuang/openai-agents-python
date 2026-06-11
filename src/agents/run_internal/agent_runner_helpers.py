@@ -1,4 +1,8 @@
-"""Internal helpers for AgentRunner.run."""
+"""Internal helpers for AgentRunner.run.
+
+学习提示：这里收纳 Runner.run 外围的杂项助手，如 trace 设置、会话保存、
+恢复上下文、usage 汇总和中断结果构造。主循环不把这些都内联，是为了保持 run.py 可读。
+"""
 
 from __future__ import annotations
 

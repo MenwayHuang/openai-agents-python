@@ -7,6 +7,9 @@ from ..model import TTSModel, TTSModelSettings
 
 DEFAULT_VOICE: Literal["ash"] = "ash"
 
+# 学习提示：OpenAITTSModel 是 OpenAI 文字转语音适配器。
+# 它把 SDK 的 TTSModel.run 抽象转换成 openai audio.speech 的流式字节输出。
+
 
 class OpenAITTSModel(TTSModel):
     """A text-to-speech model for OpenAI."""
@@ -40,6 +43,7 @@ class OpenAITTSModel(TTSModel):
             An iterator of audio chunks.
         """
         response = self._client.audio.speech.with_streaming_response.create(
+            # with_streaming_response 表示服务端边合成边返回字节，调用方可边播边收。
             model=self.model,
             voice=settings.voice or DEFAULT_VOICE,
             input=text,
@@ -50,5 +54,6 @@ class OpenAITTSModel(TTSModel):
         )
 
         async with response as stream:
+            # iter_bytes 每次产出一块 PCM 字节，VoicePipeline 会再转成事件流。
             async for chunk in stream.iter_bytes(chunk_size=1024):
                 yield chunk

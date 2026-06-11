@@ -5,6 +5,16 @@ approval plumbing, and payload coercion. Action classes live in tool_actions.py.
 
 from __future__ import annotations
 
+# 中文学习注释：
+# 这个文件是工具执行层的“地基”。
+# 重点关注：
+# - maybe_reset_tool_choice：防止模型一直被迫调用工具；
+# - resolve_enabled_function_tools：解析当前可用 FunctionTool；
+# - approval 相关函数：approve/reject/pending 如何变成 ToolApprovalItem 或 tool output；
+# - _FunctionToolBatchExecutor：并发执行 FunctionTool、处理 guardrail、hook、失败取消；
+# - shell/apply_patch/computer/custom 的 payload 归一化 helper。
+# 具体执行类在 tool_actions.py，这里更多是公共工具、审批和 FunctionTool 批处理。
+
 import asyncio
 import dataclasses
 import functools
@@ -170,6 +180,8 @@ _FunctionToolBackgroundExceptionMessage = Callable[[BaseException], str | None]
 @dataclasses.dataclass(frozen=True)
 class _FunctionToolFailure:
     """A function-tool failure with ordering metadata for arbitration."""
+    # 多个工具并发执行时，可能同时失败。
+    # 这个对象记录错误、原始工具顺序和错误来源，用来决定最终抛哪个错误。
 
     error: BaseException
     order: int
@@ -179,6 +191,8 @@ class _FunctionToolFailure:
 @dataclasses.dataclass
 class _FunctionToolTaskState:
     """Mutable execution state tracked for each function-tool task in a batch."""
+    # 每个 FunctionTool 任务的运行状态。
+    # invoke_task 是真正调用用户工具函数的 task；外层 task 还要包 guardrail/hook/post-invoke。
 
     tool_run: ToolRunFunction
     order: int
@@ -217,6 +231,8 @@ def _consume_function_tool_task_result(
     message_for_exception: _FunctionToolBackgroundExceptionMessage,
 ) -> None:
     """Report background task failures according to the provided reporting policy."""
+    # 任务被取消/脱离主流程后仍可能晚点失败。
+    # add_done_callback 会调用这里，把后台异常交给事件循环 exception_handler，避免静默丢失。
     if task.cancelled():
         return
 
@@ -239,6 +255,8 @@ def _consume_function_tool_task_result(
 
 def _get_function_tool_failure_priority(error: BaseException) -> int:
     """Return the precedence used to arbitrate concurrent function-tool failures."""
+    # BaseException 比普通 Exception 更严重，例如 KeyboardInterrupt/SystemExit。
+    # 这里优先级：CancelledError < Exception < BaseException。
     if isinstance(error, asyncio.CancelledError):
         return 0
     if isinstance(error, Exception):
@@ -251,6 +269,7 @@ def _select_function_tool_failure(
     new_failure: _FunctionToolFailure | None,
 ) -> _FunctionToolFailure | None:
     """Keep the highest-priority failure, breaking ties by tool call order."""
+    # 并发工具失败时，优先抛更严重的错误；同级错误按工具调用顺序保持确定性。
     if current_failure is None:
         return new_failure
     if new_failure is None:
@@ -428,6 +447,8 @@ async def _settle_pending_function_tool_tasks(
     ignore_cancelled_tasks: set[asyncio.Task[Any]] | None = None,
 ) -> tuple[_FunctionToolFailure | None, set[asyncio.Task[Any]]]:
     """Wait for pending tasks to settle within a bounded window and collect failures."""
+    # 某个工具失败后，其他并发工具可能还在收尾。
+    # SDK 给它们一个很短窗口完成/暴露更严重错误，避免粗暴取消导致根因被遮住。
     if not pending_tasks:
         return None, set()
 
@@ -541,6 +562,8 @@ def maybe_reset_tool_choice(
     model_settings: ModelSettings,
 ) -> ModelSettings:
     """Reset tool_choice if the agent was forced to pick a tool previously and should be reset."""
+    # 如果上一轮已经使用过工具，且 Agent.reset_tool_choice=True，
+    # 就把 tool_choice 清掉，防止模型在 required tool_choice 下无限继续调工具。
     if agent.reset_tool_choice is True and tool_use_tracker.has_used_tools(agent):
         return dataclasses.replace(model_settings, tool_choice=None)
     return model_settings
@@ -551,8 +574,11 @@ async def resolve_enabled_function_tools(
     context_wrapper: RunContextWrapper[Any],
 ) -> list[FunctionTool]:
     """Resolve enabled function tools without triggering MCP tool discovery."""
+    # 只检查 agent.tools 里的 FunctionTool，不主动拉 MCP。
+    # 恢复审批时常用这个轻量路径，避免因为 MCP 网络调用影响审批恢复。
 
     async def _check_tool_enabled(tool: FunctionTool) -> bool:
+        # FunctionTool.is_enabled 可以是 bool、同步函数或 async 函数。
         attr = tool.is_enabled
         if isinstance(attr, bool):
             return attr
@@ -575,6 +601,8 @@ async def initialize_computer_tools(
     context_wrapper: RunContextWrapper[Any],
 ) -> None:
     """Resolve computer tools ahead of model invocation so each run gets its own instance."""
+    # computer tool 可能需要为每次 run 初始化独立浏览器/远端环境。
+    # 提前 resolve 可以确保模型调用前资源可用，并绑定到当前 run_context。
     computer_tools = [tool for tool in tools if isinstance(tool, ComputerTool)]
     if not computer_tools:
         return
@@ -586,6 +614,8 @@ async def initialize_computer_tools(
 
 def get_mapping_or_attr(target: Any, key: str) -> Any:
     """Allow mapping-or-attribute access so tool payloads can be dicts or objects."""
+    # OpenAI SDK 返回对象，测试/兼容层有时传 dict。
+    # 统一用这个 helper 读取字段，避免到处写 if isinstance(dict)。
     if isinstance(target, Mapping):
         return target.get(key)
     return getattr(target, key, None)
@@ -613,6 +643,8 @@ def extract_shell_call_id(tool_call: Any) -> str:
 
 def coerce_shell_call(tool_call: Any) -> ShellCallData:
     """Normalize a shell call payload into ShellCallData for consistent execution."""
+    # 把 provider 可能返回的 dict/object 统一转成 ShellCallData。
+    # 这样 tool_actions.ShellAction 不需要关心原始 payload 的差异。
     call_id = extract_shell_call_id(tool_call)
     action_payload = get_mapping_or_attr(tool_call, "action")
     if action_payload is None:
@@ -711,6 +743,8 @@ def coerce_apply_patch_operations(
     context_wrapper: RunContextWrapper[Any],
 ) -> list[ApplyPatchOperation]:
     """Normalize apply_patch payloads into one or more editor operations."""
+    # apply_patch 支持单 operation 或 operations 列表。
+    # 归一化后统一交给 editor.create/update/delete_file。
     raw_operations = get_mapping_or_attr(tool_call, "operations")
     if isinstance(raw_operations, list):
         operations = [
@@ -807,6 +841,8 @@ def is_apply_patch_name(name: str | None, tool: ApplyPatchTool | None) -> bool:
 
 def normalize_shell_output(entry: ShellCommandOutput | Mapping[str, Any]) -> ShellCommandOutput:
     """Normalize shell output into ShellCommandOutput so downstream code sees a stable shape."""
+    # Shell executor 可以返回 SDK 结构，也可以返回 dict。
+    # 这里统一成 ShellCommandOutput，后续才能渲染/截断/序列化。
     if isinstance(entry, ShellCommandOutput):
         return entry
 
@@ -1020,6 +1056,8 @@ async def with_tool_function_span(
     fn: Callable[[Span[Any] | None], MaybeAwaitable[TToolSpanResult]],
 ) -> TToolSpanResult:
     """Execute a tool callback in a function span when tracing is active."""
+    # 给每次工具执行包一层 function span。
+    # 如果 tracing 关闭或没有当前 trace，就直接执行，避免无意义开销。
     if config.tracing_disabled or get_current_trace() is None:
         result = fn(None)
         if inspect.isawaitable(result):
@@ -1037,6 +1075,7 @@ async def with_tool_function_span(
 
 def build_litellm_json_tool_call(output: ResponseFunctionToolCall) -> FunctionTool:
     """Wrap a JSON string result in a FunctionTool so LiteLLM can stream it."""
+    # 兼容 LiteLLM 的特殊 json_tool_call：把 JSON 字符串反序列化成结构化数据。
 
     async def on_invoke_tool(_ctx: ToolContext[Any], value: Any) -> Any:
         """Deserialize JSON strings so LiteLLM callers receive structured data."""
@@ -1068,6 +1107,9 @@ async def resolve_approval_status(
     on_approval: Callable[[RunContextWrapper[Any], ToolApprovalItem], Any] | None = None,
 ) -> tuple[bool | None, ToolApprovalItem]:
     """Build approval item, run on_approval hook if needed, and return latest approval status."""
+    # 审批三态：
+    # True = 已批准；False = 已拒绝；None = 还在等待外部处理。
+    # on_approval 可以自动批准/拒绝，否则返回 pending ToolApprovalItem。
     approval_item = ToolApprovalItem(
         agent=agent,
         raw_item=raw_item,
@@ -1114,6 +1156,8 @@ def resolve_approval_interruption(
     rejection_factory: Callable[[], RunItem],
 ) -> RunItem | ToolApprovalItem | None:
     """Return a rejection or pending approval item when approval is required."""
+    # 把审批状态转成 runtime item：
+    # 拒绝 -> rejection tool output；未决 -> ToolApprovalItem；批准 -> None，表示继续执行。
     if approval_status is False:
         return rejection_factory()
     if approval_status is not True:
@@ -1133,6 +1177,8 @@ async def resolve_approval_rejection_message(
     existing_pending: ToolApprovalItem | None = None,
 ) -> str:
     """Resolve model-visible output text for approval rejections."""
+    # 审批拒绝后要给模型一个工具输出。
+    # 优先使用用户 reject 时提供的消息，其次用 RunConfig.tool_error_formatter，最后用默认文案。
     explicit_message = context_wrapper.get_rejection_message(
         tool_name,
         call_id,
@@ -1183,6 +1229,8 @@ async def function_needs_approval(
     tool_call: ResponseFunctionToolCall,
 ) -> bool:
     """Evaluate a function tool's needs_approval setting with parsed args."""
+    # FunctionTool.needs_approval 如果是 callable，会拿到解析后的工具参数 dict。
+    # JSON 解析失败时用空 dict，避免审批判断本身把 run 弄崩。
     parsed_args: dict[str, Any] = {}
     if callable(function_tool.needs_approval):
         try:
@@ -1207,6 +1255,8 @@ def process_hosted_mcp_approvals(
     append_item: Callable[[RunItem], None],
 ) -> tuple[list[ToolApprovalItem], set[str]]:
     """Filter hosted MCP outputs and merge manual approvals so only coherent items remain."""
+    # Hosted MCP 审批需要用 provider 的 approval_request_id 串联。
+    # 这里把已有 approve/reject 决策转成 mcp_approval_response，把未决项保留下来。
     hosted_mcp_approvals_by_id: dict[str, ToolApprovalItem] = {}
     for item in original_pre_step_items:
         if not isinstance(item, ToolApprovalItem):
@@ -1269,6 +1319,8 @@ def collect_manual_mcp_approvals(
     existing_pending_by_call_id: Mapping[str, ToolApprovalItem] | None = None,
 ) -> tuple[list[MCPApprovalResponseItem], list[ToolApprovalItem]]:
     """Bridge hosted MCP approval requests with manual approvals to keep state consistent."""
+    # 没有 on_approval_request 的 MCP 请求会走人工审批路径。
+    # 返回 approved response items 和仍然 pending 的 approval items。
     pending_lookup = existing_pending_by_call_id or {}
     approved: list[MCPApprovalResponseItem] = []
     pending: list[ToolApprovalItem] = []
@@ -1354,6 +1406,8 @@ def should_keep_hosted_mcp_item(
 
 class _FunctionToolBatchExecutor:
     """Own the mutable state needed to execute and arbitrate a function-tool batch."""
+    # FunctionTool 批处理执行器。
+    # 它负责并发度控制、工具审批、输入/输出 guardrail、hook、异常仲裁、agent-as-tool 中断冒泡。
 
     def __init__(
         self,
@@ -1386,12 +1440,14 @@ class _FunctionToolBatchExecutor:
         self.max_function_tool_concurrency = (
             config.tool_execution.max_function_tool_concurrency if config.tool_execution else None
         )
+        # max_function_tool_concurrency=None 表示不限制并发；否则按 slots 逐批补任务。
 
     async def execute(
         self,
     ) -> tuple[
         list[FunctionToolResult], list[ToolInputGuardrailResult], list[ToolOutputGuardrailResult]
     ]:
+        # 执行入口：先解析当前 enabled tools，再创建任务，最后汇总 FunctionToolResult 和 guardrail 结果。
         self.available_function_tools = await resolve_enabled_function_tools(
             self.execution_agent,
             self.context_wrapper,
@@ -1416,6 +1472,7 @@ class _FunctionToolBatchExecutor:
                 enabled_function_tool_ids.add(function_tool_id)
         pending_tool_runs = list(enumerate(self.tool_runs))
         self._fill_tool_task_slots(pending_tool_runs)
+        # 先填满并发槽位，后续每完成一个再补一个。
 
         try:
             await self._drain_pending_tasks(pending_tool_runs)
@@ -1432,6 +1489,7 @@ class _FunctionToolBatchExecutor:
         )
 
     def _fill_tool_task_slots(self, pending_tool_runs: list[tuple[int, ToolRunFunction]]) -> None:
+        # 根据 max_concurrency 从待执行列表里取工具，创建 asyncio task。
         max_concurrency = self.max_function_tool_concurrency
         available_slots = (
             len(pending_tool_runs)
@@ -1459,6 +1517,7 @@ class _FunctionToolBatchExecutor:
         self,
         pending_tool_runs: list[tuple[int, ToolRunFunction]],
     ) -> None:
+        # 主调度循环：等待任意工具完成，记录结果/失败，再补充新工具任务。
         while self.pending_tasks:
             done_tasks, self.pending_tasks = await asyncio.wait(
                 self.pending_tasks,
@@ -1477,6 +1536,8 @@ class _FunctionToolBatchExecutor:
         self,
         failure: _FunctionToolFailure,
     ) -> None:
+        # 一个工具失败后，取消还没进入 post-invoke 的兄弟任务；
+        # 已进入 post-invoke 的任务短暂等待，避免 on_tool_end/guardrail 清理被粗暴截断。
         cancellable_tasks, post_invoke_tasks = self._partition_pending_tasks()
         self.teardown_cancelled_tasks.update(cancellable_tasks)
         _cancel_function_tool_tasks(cancellable_tasks)
@@ -1556,6 +1617,8 @@ class _FunctionToolBatchExecutor:
         func_tool: FunctionTool,
         tool_call: ResponseFunctionToolCall,
     ) -> Any:
+        # 单个 FunctionTool 的完整执行：
+        # normalize tool call -> 创建 ToolContext -> 审批 -> input guardrail -> 调用工具 -> output guardrail/hook。
         raw_tool_call = tool_call
         outer_task = asyncio.current_task()
         task_state.in_post_invoke_phase = False
@@ -1574,6 +1637,7 @@ class _FunctionToolBatchExecutor:
             if tool_context_namespace is None:
                 tool_context_namespace = get_tool_call_namespace(tool_call)
             tool_context = ToolContext.from_agent_context(
+                # ToolContext 比 RunContextWrapper 多 tool_call_id、tool_arguments、agent、run_config 等运行时信息。
                 self.context_wrapper,
                 tool_call.call_id,
                 tool_call=raw_tool_call,
@@ -1587,6 +1651,7 @@ class _FunctionToolBatchExecutor:
 
             try:
                 approval_result = await self._maybe_execute_tool_approval(
+                    # 如果需要审批，可能直接返回 pending/rejection；否则返回 None 继续执行工具体。
                     func_tool=func_tool,
                     tool_call=tool_call,
                     raw_tool_call=raw_tool_call,
@@ -1630,6 +1695,11 @@ class _FunctionToolBatchExecutor:
         raw_tool_call: ResponseFunctionToolCall,
         span_fn: Span[Any],
     ) -> Any | None:
+        # FunctionTool 审批处理：
+        # - 不需要审批：返回 None；
+        # - 未审批：返回 FunctionToolResult(run_item=ToolApprovalItem)；
+        # - 已拒绝：返回 FunctionToolResult(run_item=function_rejection_item)；
+        # - 已批准：返回 None，继续执行。
         needs_approval_result = await function_needs_approval(
             func_tool,
             self.context_wrapper,
@@ -1711,6 +1781,7 @@ class _FunctionToolBatchExecutor:
         tool_context: ToolContext[Any],
         agent_hooks: Any,
     ) -> Any:
+        # 执行工具体前后包住 input/output guardrail 与 lifecycle hooks。
         rejected_message = await _execute_tool_input_guardrails(
             func_tool=func_tool,
             tool_context=tool_context,
@@ -1730,6 +1801,7 @@ class _FunctionToolBatchExecutor:
         )
 
         invoke_task = asyncio.create_task(
+            # 真正调用用户工具函数单独开 task，便于取消/超时/失败仲裁。
             self._invoke_tool_and_run_post_invoke(
                 outer_task=outer_task,
                 task_state=task_state,
@@ -1752,6 +1824,7 @@ class _FunctionToolBatchExecutor:
         tool_context: ToolContext[Any],
         agent_hooks: Any,
     ) -> Any:
+        # invoke_function_tool 会处理 ToolContext/RunContextWrapper 兼容和工具级 timeout。
         try:
             real_result = await invoke_function_tool(
                 function_tool=func_tool,
@@ -1783,6 +1856,7 @@ class _FunctionToolBatchExecutor:
             real_result = result
 
         task_state.in_post_invoke_phase = True
+        # 进入 post-invoke 后，即使兄弟工具失败，也尽量让 output guardrail/on_tool_end 完成。
 
         final_result = await _execute_tool_output_guardrails(
             func_tool=func_tool,
@@ -1808,6 +1882,8 @@ class _FunctionToolBatchExecutor:
         outer_task: asyncio.Task[Any] | None,
         invoke_task: asyncio.Task[Any],
     ) -> Any:
+        # asyncio.shield 防止外层 task 被取消时直接把 invoke_task 一起取消。
+        # 这样可以更精细地区分“兄弟失败取消”和“父任务整体取消”。
         try:
             return await asyncio.shield(invoke_task)
         except asyncio.CancelledError as cancel_exc:
@@ -1874,6 +1950,8 @@ class _FunctionToolBatchExecutor:
         return nested_run_result, nested_interruptions
 
     def _build_function_tool_results(self) -> list[FunctionToolResult]:
+        # 把每个工具原始返回值包装成 FunctionToolResult。
+        # 如果 agent-as-tool 内部有 pending interruption，就暂时不生成 tool output item。
         function_tool_results: list[FunctionToolResult] = []
         for tool_run in self.tool_runs:
             result = self.results_by_tool_run[id(tool_run)]
@@ -1928,6 +2006,7 @@ async def execute_function_tool_calls(
     list[FunctionToolResult], list[ToolInputGuardrailResult], list[ToolOutputGuardrailResult]
 ]:
     """Execute function tool calls with approvals, guardrails, and hooks."""
+    # 对外的 FunctionTool 批量执行入口，turn_planning 会调用这里。
     return await _FunctionToolBatchExecutor(
         bindings=bindings,
         tool_runs=tool_runs,
@@ -1947,6 +2026,7 @@ async def execute_custom_tool_calls(
     config: RunConfig,
 ) -> list[RunItem]:
     """Run Responses custom tool calls serially and wrap outputs."""
+    # custom tool 目前串行执行，便于保持输出顺序和审批行为可预测。
     from .tool_actions import CustomToolAction
 
     results: list[RunItem] = []
@@ -1997,6 +2077,7 @@ async def execute_shell_calls(
     config: RunConfig,
 ) -> list[RunItem]:
     """Run shell tool calls serially and wrap outputs."""
+    # shell/apply_patch/local_shell 都有明显副作用，因此这里按列表顺序串行执行。
     from .tool_actions import ShellAction
 
     results: list[RunItem] = []
@@ -2047,6 +2128,7 @@ async def execute_computer_actions(
     config: RunConfig,
 ) -> list[RunItem]:
     """Run computer actions serially and emit screenshot outputs."""
+    # computer tool 需要处理安全检查确认，执行后通常回传截图作为模型下一步依据。
     from .tool_actions import ComputerAction
 
     results: list[RunItem] = []
@@ -2099,6 +2181,8 @@ async def execute_approved_tools(
     all_tools: list[Tool] | None = None,
 ) -> None:
     """Execute tools that have been approved after an interruption (HITL resume path)."""
+    # 旧/兼容型 HITL 恢复入口：根据 interruption 中的审批项重新找到工具并执行。
+    # 新主链路更多通过 resolve_interrupted_turn 继续完整 turn。
     tool_runs: list[ToolRunFunction] = []
     tool_map: dict[NamedToolLookupKey, Tool] = cast(
         dict[NamedToolLookupKey, Tool],

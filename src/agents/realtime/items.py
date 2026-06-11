@@ -4,6 +4,9 @@ from typing import Annotated, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
+# 学习提示：这里定义 Realtime 历史/消息/工具调用的 Pydantic 模型。
+# model_config = ConfigDict(extra="allow") 表示允许 API 返回额外字段，不会因新字段报错。
+
 
 class InputText(BaseModel):
     """Text input content for realtime messages."""

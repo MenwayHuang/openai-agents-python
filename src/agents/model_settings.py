@@ -1,3 +1,13 @@
+"""模型调用参数配置。
+
+中文学习说明：
+- `ModelSettings` 保存 temperature、top_p、tool_choice、max_tokens、reasoning、
+  retry、extra_headers 等模型请求参数。
+- 它既可放在 Agent 上，也可放在 RunConfig 上；运行时通过 `resolve()` 做覆盖合并。
+- 对 PPT Agent 来说，建议把“创意生成”“结构化规划”“质量检查”等不同 agent 的模型参数
+  显式配置，避免所有任务共用一套随机性/输出长度。
+"""
+
 from __future__ import annotations
 
 from collections.abc import Mapping
@@ -22,6 +32,8 @@ from .retry import (
 
 
 class _OmitTypeAnnotation:
+    # OpenAI SDK 的 Omit 表示“不发送这个参数”。Pydantic 默认不知道如何处理它，
+    # 所以这里提供自定义 schema/序列化规则。
     @classmethod
     def __get_pydantic_core_schema__(
         cls,
@@ -52,6 +64,7 @@ class _OmitTypeAnnotation:
 
 @dataclass
 class MCPToolChoice:
+    # 指定 MCP server 上某个工具作为 tool_choice。
     server_label: str
     name: str
 
@@ -92,6 +105,7 @@ class ModelSettings:
     Not all models/providers support all of these parameters, so please check the API documentation
     for the specific model and provider you are using.
     """
+    # 这是 Pydantic dataclass：保留 dataclass 轻量写法，同时支持 TypeAdapter 序列化。
 
     temperature: float | None = None
     """The temperature to use when calling the model."""
@@ -194,6 +208,8 @@ class ModelSettings:
     def resolve(self, override: ModelSettings | None) -> ModelSettings:
         """Produce a new ModelSettings by overlaying any non-None values from the
         override on top of this instance."""
+        # 合并规则：override 中非 None 字段覆盖当前字段；None 表示“不覆盖”。
+        # 这让 RunConfig 可以只覆盖某几个模型参数。
         if override is None:
             return self
 
@@ -204,6 +220,7 @@ class ModelSettings:
         }
 
         # Handle extra_args merging specially - merge dictionaries instead of replacing.
+        # extra_args 是自由扩展参数，采用 dict 合并，避免运行级配置把 agent 级配置全部抹掉。
         if self.extra_args is not None or override.extra_args is not None:
             merged_args = {}
             if self.extra_args:
@@ -218,10 +235,12 @@ class ModelSettings:
         return replace(self, **changes)
 
     def to_json_dict(self) -> dict[str, Any]:
+        # TypeAdapter 是 Pydantic v2 的序列化/校验入口。
         return cast(dict[str, Any], TypeAdapter(ModelSettings).dump_python(self, mode="json"))
 
     def to_traceable_dict(self) -> dict[str, Any]:
         """Serialize settings for tracing without provider-specific request extras."""
+        # trace 里只记录稳定、安全、通用的模型参数，不把 extra_headers/body/query 等 provider 细节写进去。
         payload = self.to_json_dict()
         return {key: payload[key] for key in _TRACEABLE_MODEL_SETTING_FIELDS if key in payload}
 
@@ -230,6 +249,7 @@ def _merge_retry_settings(
     inherited: ModelRetrySettings | None,
     override: ModelRetrySettings | None,
 ) -> ModelRetrySettings | None:
+    # retry 配置也遵循“非 None 覆盖”，其中 backoff 子配置再单独合并。
     if inherited is None:
         return override
     if override is None:

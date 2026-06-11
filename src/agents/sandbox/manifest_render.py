@@ -10,6 +10,9 @@ from .workspace_paths import coerce_posix_path, posix_path_as_path
 MAX_MANIFEST_DESCRIPTION_CHARS = 5000
 MANIFEST_DESCRIPTION_TRUNCATION_MARKER_TEMPLATE = "... (truncated {omitted_chars} chars)"
 
+# 学习提示：这个文件把 Manifest 渲染成人类/模型可读的目录树说明。
+# 模型执行前会看到工作区布局，但说明太长会被截断，避免占满上下文。
+
 
 def _truncate_manifest_description(description: str, max_chars: int | None) -> str:
     if max_chars is None or len(description) <= max_chars:
@@ -56,6 +59,7 @@ def render_manifest_description(
     depth: int | None = 1,
     max_chars: int | None = MAX_MANIFEST_DESCRIPTION_CHARS,
 ) -> str:
+    # depth 控制目录树深度，max_chars 控制最终 prompt 里的说明长度。
     if depth is not None and depth <= 0:
         raise ValueError("depth must be a non-zero positive integer or None")
     if max_chars is not None and max_chars <= 0:

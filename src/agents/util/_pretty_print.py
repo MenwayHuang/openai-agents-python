@@ -2,6 +2,8 @@ from typing import TYPE_CHECKING
 
 from pydantic import BaseModel
 
+# 学习提示：pretty_print_* 是调试辅助，把 RunResult/错误详情格式化成适合终端阅读的文本。
+
 if TYPE_CHECKING:
     from ..exceptions import RunErrorDetails
     from ..result import RunResult, RunResultBase, RunResultStreaming

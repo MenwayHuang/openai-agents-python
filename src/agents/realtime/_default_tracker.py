@@ -6,6 +6,9 @@ from datetime import datetime
 from ._util import calculate_audio_length_ms
 from .config import RealtimeAudioFormat
 
+# 学习提示：这个 tracker 用来估算模型音频播放到了哪里。
+# 实时语音 Agent 需要知道“当前音频是否还在播、播了多久”，才能正确处理中断。
+
 
 @dataclass
 class ModelAudioState:
@@ -30,6 +33,7 @@ class ModelAudioTracker:
 
     def on_audio_delta(self, item_id: str, item_content_index: int, audio_bytes: bytes) -> None:
         """Called when an audio delta is received from the model."""
+        # 每收到一段音频 delta，就按音频格式估算毫秒数并累计。
         ms = calculate_audio_length_ms(self._format, audio_bytes)
         new_key = (item_id, item_content_index)
 

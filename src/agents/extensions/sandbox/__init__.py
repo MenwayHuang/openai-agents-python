@@ -1,3 +1,9 @@
+"""第三方 sandbox Provider 扩展入口。
+
+学习提示：这里聚合 E2B、Modal、Daytona、Runloop、Cloudflare、Vercel 等执行环境。
+当前 PPT Agent 不需要先学这些细节，理解核心 sandbox 抽象后再按部署平台选择 Provider。
+"""
+
 try:
     from .e2b import (
         E2BCloudBucketMountStrategy as E2BCloudBucketMountStrategy,

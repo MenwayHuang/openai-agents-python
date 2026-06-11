@@ -21,15 +21,21 @@ HEADERS_OVERRIDE: ContextVar[dict[str, str] | None] = ContextVar(
     "openai_chatcompletions_headers_override", default=None
 )
 
+# 学习提示：Chat Completions 是旧接口形态，但 SDK 需要把它适配到统一的
+# Responses 风格数据结构里。这个 helper 集中处理请求参数默认值、logprobs
+# 转换、以及少量第三方 Provider 兼容问题。
+
 
 class ChatCmplHelpers:
     @classmethod
     def is_openai(cls, client: AsyncOpenAI) -> bool:
+        # 判断是否官方 api.openai.com 客户端；非官方兼容端点不能默认假设所有参数都支持。
         return is_official_openai_client(client)
 
     @classmethod
     def get_store_param(cls, client: AsyncOpenAI, model_settings: ModelSettings) -> bool | None:
         # Match the behavior of Responses where store is True when not given
+        # 官方 OpenAI 默认 store=True；兼容 Provider 则传 None，避免发送不支持的字段。
         default_store = True if cls.is_openai(client) else None
         return model_settings.store if model_settings.store is not None else default_store
 
@@ -37,6 +43,7 @@ class ChatCmplHelpers:
     def get_stream_options_param(
         cls, client: AsyncOpenAI, model_settings: ModelSettings, stream: bool
     ) -> dict[str, bool] | None:
+        # stream_options.include_usage 让流式输出最后带 usage；同样只对官方客户端默认开启。
         if not stream:
             return None
 
@@ -53,6 +60,7 @@ class ChatCmplHelpers:
     def convert_logprobs_for_output_text(
         cls, logprobs: list[ChatCompletionTokenLogprob] | None
     ) -> list[Logprob] | None:
+        # 将 Chat Completions 的 token logprob 对象转换成 Responses 输出文本使用的类型。
         if not logprobs:
             return None
 
@@ -79,6 +87,7 @@ class ChatCmplHelpers:
     def convert_logprobs_for_text_delta(
         cls, logprobs: list[ChatCompletionTokenLogprob] | None
     ) -> list[DeltaLogprob] | None:
+        # 流式 delta 的 logprob 类型和最终文本的 logprob 类型不同，所以单独转换。
         if not logprobs:
             return None
 

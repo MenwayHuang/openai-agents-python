@@ -19,14 +19,20 @@ from .session.dependencies import Dependencies
 
 SnapshotClass = type["SnapshotBase"]
 
+# 学习提示：snapshot 用来持久化/恢复 sandbox 工作区状态，支持本地和远端形态。
+# 这类似“保存一次 Agent 工作现场”，后续可以恢复继续执行。
+
 
 async def _maybe_await(value: object) -> object:
+    # 兼容同步/异步 hook：如果是 awaitable 就 await，否则直接返回。
     if inspect.isawaitable(value):
         return await cast(Awaitable[object], value)
     return value
 
 
 class SnapshotBase(BaseModel, abc.ABC):
+    """所有 snapshot 类型的 Pydantic 基类，带 type 注册表。"""
+
     model_config = ConfigDict(frozen=True)
 
     type: str
@@ -35,6 +41,7 @@ class SnapshotBase(BaseModel, abc.ABC):
 
     @classmethod
     def __pydantic_init_subclass__(cls, **kwargs: object) -> None:
+        # Pydantic 子类初始化钩子：每个具体 snapshot 按 type 注册，便于 parse 时分派。
         super().__pydantic_init_subclass__(**kwargs)
 
         type_field = cls.model_fields.get("type")

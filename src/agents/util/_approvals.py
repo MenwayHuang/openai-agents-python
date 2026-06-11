@@ -9,6 +9,9 @@ from ..exceptions import UserError
 # Keep this helper here so both run_internal and realtime can import it without
 # creating cross-package dependencies.
 
+# 学习提示：needs_approval 可以是 bool，也可以是同步/异步函数。
+# 这个 helper 统一求值，供普通 run_internal 和 realtime 共用。
+
 
 async def evaluate_needs_approval_setting(
     needs_approval_setting: bool | Callable[..., Any],

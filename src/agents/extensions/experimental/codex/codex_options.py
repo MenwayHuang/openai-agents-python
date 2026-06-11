@@ -6,6 +6,8 @@ from typing import Any
 
 from agents.exceptions import UserError
 
+# 学习提示：CodexOptions 是传给 Codex CLI 进程的全局配置，frozen=True 表示创建后不可变。
+
 
 @dataclass(frozen=True)
 class CodexOptions:

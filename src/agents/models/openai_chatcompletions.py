@@ -1,3 +1,13 @@
+"""OpenAI Chat Completions API 的 Model 兼容实现。
+
+中文学习说明：
+- SDK 内部统一使用 Responses 风格的 input/tool/output item，但 Chat Completions API
+  使用 messages/tools 的老格式，所以这里需要大量转换。
+- Chat Completions 不支持 previous_response_id、conversation_id、Responses reusable prompt
+  等能力；代码会选择 warning 或 strict 模式报错。
+- 如果你做新 Agent，优先学习 Responses 适配器；这个文件主要学习“如何兼容旧 API/第三方网关”。
+"""
+
 from __future__ import annotations
 
 import json
@@ -47,6 +57,8 @@ if TYPE_CHECKING:
 
 
 class OpenAIChatCompletionsModel(Model):
+    # Chat Completions 适配器：对 Runner 暴露同样的 Model 接口，
+    # 内部把 Responses input items 转成 chat messages。
     _OFFICIAL_OPENAI_SUPPORTED_INPUT_CONTENT_TYPES = frozenset(
         {"input_text", "input_image", "input_audio", "input_file"}
     )
@@ -72,6 +84,8 @@ class OpenAIChatCompletionsModel(Model):
         return ChatCmplHelpers.is_openai(self._get_client())
 
     def _handle_unsupported_prompt(self, prompt: ResponsePromptParam | None) -> None:
+        # Chat Completions 没有 Responses reusable prompt 功能；
+        # strict 模式下报错，默认只警告并忽略。
         if prompt is None:
             return
 
@@ -96,6 +110,8 @@ class OpenAIChatCompletionsModel(Model):
     def _validate_official_openai_input_content_types(
         self, request_input: str | list[TResponseInputItem]
     ) -> None:
+        # 官方 Chat Completions 只支持部分输入内容类型。
+        # 第三方兼容网关可能支持更多，所以只在官方 OpenAI client 下严格校验。
         if not ChatCmplHelpers.is_openai(self._client) or isinstance(request_input, str):
             return
 
@@ -140,6 +156,10 @@ class OpenAIChatCompletionsModel(Model):
         conversation_id: str | None = None,
         prompt: ResponsePromptParam | None = None,
     ) -> ModelResponse:
+        # 非流式 Chat Completions 调用：
+        # 1. 把 Responses 格式输入转换成 chat messages
+        # 2. 调 `client.chat.completions.create`
+        # 3. 再把 ChatCompletionMessage 转回 Responses output items
         self._handle_unsupported_server_managed_conversation_state(
             previous_response_id=previous_response_id,
             conversation_id=conversation_id,
@@ -165,6 +185,7 @@ class OpenAIChatCompletionsModel(Model):
             )
 
             if not response.choices:
+                # Chat Completions 正常响应至少应有一个 choice，没有通常表示 provider 返回异常形态。
                 provider_error = getattr(response, "error", None)
                 error_details = f": {provider_error}" if provider_error is not None else ""
                 raise ModelBehaviorError(
@@ -222,6 +243,7 @@ class OpenAIChatCompletionsModel(Model):
                 provider_data["response_id"] = response.id
 
             items = (
+                # 转回 Responses item 后，上层 Runner 就无需关心底层 API 是 Chat 还是 Responses。
                 Converter.message_to_output_items(
                     message,
                     provider_data=provider_data,
@@ -249,6 +271,7 @@ class OpenAIChatCompletionsModel(Model):
     def _attach_logprobs_to_output(
         self, output_items: list[ResponseOutputItem], logprobs: list[Logprob]
     ) -> None:
+        # Chat API 的 logprobs 挂在 choice 上；SDK 统一输出时要挂回 output_text。
         for output_item in output_items:
             if not isinstance(output_item, ResponseOutputMessage):
                 continue
@@ -274,6 +297,7 @@ class OpenAIChatCompletionsModel(Model):
         """
         Yields a partial message as it is generated, as well as the usage information.
         """
+        # 流式 Chat chunk 会通过 ChatCmplStreamHandler 转成 Responses 风格 stream events。
         self._handle_unsupported_server_managed_conversation_state(
             previous_response_id=previous_response_id,
             conversation_id=conversation_id,
@@ -337,6 +361,8 @@ class OpenAIChatCompletionsModel(Model):
         previous_response_id: str | None,
         conversation_id: str | None,
     ) -> None:
+        # previous_response_id/conversation_id 是 Responses API 的服务端状态能力，
+        # Chat Completions 不支持；默认 warning，strict 模式报错。
         unsupported: list[str] = []
         if previous_response_id is not None:
             unsupported.append("previous_response_id")
@@ -406,6 +432,8 @@ class OpenAIChatCompletionsModel(Model):
         stream: bool = False,
         prompt: ResponsePromptParam | None = None,
     ) -> ChatCompletion | tuple[Response, AsyncStream[ChatCompletionChunk]]:
+        # Chat Completions 真正请求入口。它的核心工作是把 Runner 内部的 Responses-style
+        # input/tool/output_schema 转成 chat.completions.create 接受的 messages/tools/response_format。
         self._handle_unsupported_prompt(prompt)
         self._validate_official_openai_input_content_types(input)
         converted_messages = Converter.items_to_messages(
@@ -417,6 +445,7 @@ class OpenAIChatCompletionsModel(Model):
         )
 
         if system_instructions:
+            # Chat Completions 没有单独 instructions 字段，所以 system prompt 要插到 messages 开头。
             converted_messages.insert(
                 0,
                 {
@@ -441,6 +470,7 @@ class OpenAIChatCompletionsModel(Model):
         converted_tools = [Converter.tool_to_openai(tool) for tool in tools] if tools else []
 
         for handoff in handoffs:
+            # handoff 也伪装成一个 function tool，让模型通过 tool call 表达“移交控制权”。
             converted_tools.append(Converter.convert_handoff_tool(handoff))
 
         converted_tools = _to_dump_compatible(converted_tools)
@@ -477,6 +507,8 @@ class OpenAIChatCompletionsModel(Model):
         stream_param: Literal[True] | Omit = True if stream else omit
 
         create_kwargs: dict[str, Any] = {
+            # 这里是最终传给 `client.chat.completions.create` 的参数集合。
+            # OpenAI SDK 的 `omit` 表示“不发送该字段”，不是 JSON null。
             "model": self.model,
             "messages": converted_messages,
             "tools": tools_param,
@@ -520,6 +552,8 @@ class OpenAIChatCompletionsModel(Model):
         if isinstance(ret, ChatCompletion):
             return ret
 
+        # 流式 Chat Completions 返回 ChatCompletionChunk stream；为了让上层继续使用
+        # Responses-style stream handler，这里先构造一个假的 Response 容器作为累积目标。
         responses_tool_choice = OpenAIResponsesConverter.convert_tool_choice(
             model_settings.tool_choice
         )

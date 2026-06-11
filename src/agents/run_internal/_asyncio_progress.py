@@ -5,6 +5,9 @@ small set of private asyncio attributes for patterns that still hide their
 driving tasks or deadlines (`Task._fut_waiter`, gather `_children`, shield
 callbacks, and loop `_scheduled`). When a structure is not recognized, the
 helpers must fail safe by returning ``None`` rather than raising.
+
+学习提示：这是一个尽力而为的 asyncio 任务进度探测器。
+工具任务被取消时，SDK 会尝试判断它是否只是 sleep/等待超时，从而给出更好的恢复信息。
 """
 
 from __future__ import annotations

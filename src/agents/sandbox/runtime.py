@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+# 学习提示：SandboxRuntime 是普通 Runner 和 sandbox 执行环境之间的桥。
+# 它负责准备 SandboxAgent、启动/复用 session、绑定工具、收集 rollout 记忆和 trace。
+
 import logging
 from collections.abc import Sequence
 from contextlib import nullcontext
@@ -63,6 +66,8 @@ def _stream_memory_input_override(
 
 
 class SandboxRuntime(Generic[TContext]):
+    """一次 sandbox 化 Agent 运行的协调器。"""
+
     def __init__(
         self,
         *,

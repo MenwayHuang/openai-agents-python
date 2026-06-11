@@ -5,6 +5,9 @@ from enum import Enum
 
 from .types import Permissions
 
+# 学习提示：这里是 sandbox 文件列表/元信息的数据结构。
+# EntryKind 区分目录、文件、链接等类型，FileEntry 则记录权限、owner、group、size。
+
 
 class EntryKind(str, Enum):
     DIRECTORY = "directory"

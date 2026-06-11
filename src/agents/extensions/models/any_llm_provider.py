@@ -6,6 +6,9 @@ from .any_llm_model import AnyLLMModel
 
 DEFAULT_MODEL: str = f"openai/{get_default_model()}"
 
+# 学习提示：Provider 负责按 model_name 返回具体 Model 实例。
+# any-llm 通常从各 Provider 的环境变量读取 key，所以这里配置很薄。
+
 
 class AnyLLMProvider(ModelProvider):
     """A ModelProvider that routes model calls through any-llm.

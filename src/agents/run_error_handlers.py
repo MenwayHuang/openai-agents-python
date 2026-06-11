@@ -1,3 +1,11 @@
+"""Run 级错误处理回调。
+
+中文学习说明：
+- 有些错误不一定要直接抛给调用方，比如 max_turns 超限或模型拒绝，可以由业务 handler
+  转成一个最终输出。
+- 这适合做“兜底回复”“任务失败说明”“保存失败状态”等业务化处理。
+"""
+
 from __future__ import annotations
 
 from collections.abc import Callable
@@ -35,6 +43,7 @@ class RunErrorHandlerInput(Generic[TContext]):
 @dataclass
 class RunErrorHandlerResult:
     """Result returned by an error handler."""
+    # include_in_history=True 表示 handler 产出的 final_output 也进入对话历史。
 
     final_output: Any
     include_in_history: bool = True

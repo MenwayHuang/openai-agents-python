@@ -10,6 +10,9 @@ from .agent import RealtimeAgent
 from .items import RealtimeItem
 from .model_events import RealtimeModelAudioEvent, RealtimeModelEvent
 
+# 学习提示：这些 dataclass 是 RealtimeSession 对外抛出的领域事件。
+# 它们把底层模型事件转成“Agent 开始/结束、工具开始/结束、音频、guardrail”等业务语义。
+
 
 @dataclass
 class RealtimeEventInfo:

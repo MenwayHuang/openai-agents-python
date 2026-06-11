@@ -5,6 +5,9 @@ if TYPE_CHECKING:
     from .spans import Span
     from .traces import Trace
 
+# 学习提示：TracingProcessor/Exporter 是 trace 系统的插件接口。
+# 你可以自己实现处理器，把 span/trace 写到数据库、日志系统或可视化平台。
+
 
 class TracingProcessor(abc.ABC):
     """Interface for processing and monitoring traces and spans in the OpenAI Agents system.

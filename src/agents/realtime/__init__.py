@@ -1,3 +1,10 @@
+"""Realtime 子包的公开导出入口。
+
+学习提示：这里把实时语音/双向 WebSocket Agent 相关的 Agent、事件、配置、
+模型接口和 Session 统一暴露给外部使用。当前 PPT Agent 暂时不依赖它，
+但后续如果做实时讲解 PPT 或语音协作，可以从这里看能力边界。
+"""
+
 from .agent import RealtimeAgent, RealtimeAgentHooks, RealtimeRunHooks
 from .config import (
     RealtimeAudioFormat,

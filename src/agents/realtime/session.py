@@ -1,5 +1,9 @@
 from __future__ import annotations
 
+# 学习提示：RealtimeSession 是实时 Agent 的运行核心。它维护当前 Agent、历史消息、
+# 工具调用、handoff、guardrail，并通过 RealtimeModel 和底层 WebSocket 双向通信。
+# 这类“大协调器”不适合 PPT Agent 早期照搬，但值得学习它如何把事件拆成小类型处理。
+
 import asyncio
 import dataclasses
 import inspect
@@ -75,6 +79,8 @@ REJECTION_MESSAGE = DEFAULT_APPROVAL_REJECTION_MESSAGE
 
 
 class _RealtimeSessionClosedSentinel:
+    """内部哨兵对象：用于队列里标记 session 已关闭。"""
+
     pass
 
 

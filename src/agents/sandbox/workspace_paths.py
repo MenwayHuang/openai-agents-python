@@ -8,6 +8,9 @@ from pydantic import BaseModel, field_validator
 
 from .errors import InvalidManifestPathError, WorkspaceArchiveWriteError
 
+# 学习提示：sandbox 内部统一使用 POSIX 风格路径，即使用在 Windows 上也尽量用 /。
+# 这里集中做路径归一化、根路径保护、Windows 绝对路径识别，避免路径穿越和误授权。
+
 _ROOT_PATH_GRANT_ERROR = "sandbox path grant path must not be filesystem root"
 _RESOLVED_ROOT_PATH_GRANT_ERROR = "sandbox path grant path must not resolve to filesystem root"
 
@@ -88,6 +91,7 @@ class SandboxPathGrant(BaseModel):
     @field_validator("path")
     @classmethod
     def _validate_path(cls, value: str) -> str:
+        # Pydantic field_validator 在模型构造时校验字段，这里阻止把文件系统根目录授权出去。
         if (windows_path := windows_absolute_path(value)) is not None:
             native_path = _native_path_from_windows_absolute(windows_path)
             if native_path is not None:

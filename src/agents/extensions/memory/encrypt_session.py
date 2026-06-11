@@ -23,6 +23,9 @@ Usage::
     )
 
     await Runner.run(agent, "Hello", session=session)
+
+学习提示：EncryptedSession 是“装饰器式”存储包装：底层可以是任意 Session，
+外层负责加密和 TTL 过期。以后保存用户隐私项目时这种分层很有价值。
 """
 
 from __future__ import annotations

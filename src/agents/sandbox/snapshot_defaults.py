@@ -11,6 +11,9 @@ from .snapshot import LocalSnapshotSpec
 _DEFAULT_LOCAL_SNAPSHOT_TTL_SECONDS = 60 * 60 * 24 * 30
 _DEFAULT_LOCAL_SNAPSHOT_SUBDIR = Path("openai-agents-python") / "sandbox" / "snapshots"
 
+# 学习提示：这里计算本地默认 snapshot 存放目录，并清理过期 snapshot。
+# 不同系统使用不同标准目录：macOS Application Support、Windows AppData、Linux XDG state。
+
 
 def _first_absolute_windows_env_path(env: Mapping[str, str], *names: str) -> Path | None:
     for name in names:
@@ -29,6 +32,7 @@ def default_local_snapshot_base_dir(
     platform: str | None = None,
     os_name: str | None = None,
 ) -> Path:
+    # 允许传入 home/env/platform/os_name，方便测试不同操作系统路径逻辑。
     resolved_home = home or Path.home()
     resolved_env = env or os.environ
     resolved_platform = platform or sys.platform

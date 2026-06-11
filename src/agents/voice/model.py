@@ -14,6 +14,9 @@ DEFAULT_TTS_INSTRUCTIONS = (
 )
 DEFAULT_TTS_BUFFER_SIZE = 120
 
+# 学习提示：这里定义语音 Provider 抽象。STTModel 负责音频转文本，
+# TTSModel 负责文本转音频，VoiceModelProvider 负责按名称拿到具体模型实现。
+
 TTSVoice = Literal["alloy", "ash", "coral", "echo", "fable", "onyx", "nova", "sage", "shimmer"]
 """Exportable type for the TTSModelSettings voice enum"""
 
@@ -80,6 +83,7 @@ class TTSModel(abc.ABC):
         Returns:
             An async iterator of audio bytes, in PCM format.
         """
+        # AsyncIterator[bytes] 表示 TTS 可以边生成边产出音频块。
         pass
 
 

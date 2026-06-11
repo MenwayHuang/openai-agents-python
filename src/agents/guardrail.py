@@ -1,5 +1,12 @@
 from __future__ import annotations
 
+# 中文学习注释：
+# 这个文件定义 Agent 级 guardrail：
+# - InputGuardrail：在首轮用户输入进入 Agent 前/并行时检查；
+# - OutputGuardrail：在最终输出返回给用户前检查。
+# guardrail 返回 GuardrailFunctionOutput，如果 tripwire_triggered=True，
+# runtime 会抛出对应异常并停止执行。
+
 import inspect
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
@@ -13,12 +20,14 @@ from .run_context import RunContextWrapper, TContext
 from .util._types import MaybeAwaitable
 
 if TYPE_CHECKING:
+    # 只用于类型检查，避免运行时循环导入 Agent。
     from .agent import Agent
 
 
 @dataclass
 class GuardrailFunctionOutput:
     """The output of a guardrail function."""
+    # guardrail 的通用输出：output_info 放检查细节，tripwire_triggered 决定是否拦截。
 
     output_info: Any
     """
@@ -82,6 +91,7 @@ class InputGuardrail(Generic[TContext]):
     the agent's execution will immediately stop, and
     an `InputGuardrailTripwireTriggered` exception will be raised
     """
+    # Generic[TContext] 让 guardrail 函数知道 run context 的业务类型。
 
     guardrail_function: Callable[
         [RunContextWrapper[TContext], Agent[Any], str | list[TResponseInputItem]],
@@ -114,6 +124,7 @@ class InputGuardrail(Generic[TContext]):
         input: str | list[TResponseInputItem],
         context: RunContextWrapper[TContext],
     ) -> InputGuardrailResult:
+        # guardrail_function 可以同步也可以异步，统一在这里 await。
         if not callable(self.guardrail_function):
             raise UserError(f"Guardrail function must be callable, got {self.guardrail_function}")
 
@@ -141,6 +152,8 @@ class OutputGuardrail(Generic[TContext]):
     Guardrails return a `GuardrailResult`. If `result.tripwire_triggered` is `True`, an
     `OutputGuardrailTripwireTriggered` exception will be raised.
     """
+    # OutputGuardrail 只检查最终输出，不检查中间工具结果。
+    # 工具级检查在 tool_guardrails.py。
 
     guardrail_function: Callable[
         [RunContextWrapper[TContext], Agent[Any], Any],
@@ -186,6 +199,7 @@ class OutputGuardrail(Generic[TContext]):
 
 
 TContext_co = TypeVar("TContext_co", bound=Any, covariant=True)
+# covariant=True 表示类型参数协变，是类型系统概念；运行时没有行为影响。
 
 # For InputGuardrail
 _InputGuardrailFuncSync = Callable[
@@ -251,6 +265,9 @@ def input_guardrail(
         run_in_parallel: Whether to run the guardrail concurrently with the agent (True, default)
             or before the agent starts (False).
     """
+    # 和 @function_tool 类似，这个装饰器支持两种写法：
+    # @input_guardrail
+    # @input_guardrail(name="...", run_in_parallel=False)
 
     def decorator(
         f: _InputGuardrailFuncSync[TContext_co] | _InputGuardrailFuncAsync[TContext_co],
@@ -264,9 +281,11 @@ def input_guardrail(
 
     if func is not None:
         # Decorator was used without parentheses
+        # 使用 @input_guardrail 的路径。
         return decorator(func)
 
     # Decorator used with keyword arguments
+    # 使用 @input_guardrail(...) 的路径。
     return decorator
 
 
@@ -325,6 +344,7 @@ def output_guardrail(
         @output_guardrail(name="guardrail_name")
         async def my_async_guardrail(...): ...
     """
+    # 输出 guardrail 装饰器，同样兼容 @output_guardrail 和 @output_guardrail(...)。
 
     def decorator(
         f: _OutputGuardrailFuncSync[TContext_co] | _OutputGuardrailFuncAsync[TContext_co],

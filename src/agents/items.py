@@ -1,3 +1,14 @@
+"""Agent 运行过程中产生的“事件/物料”模型。
+
+中文学习说明：
+- 这个文件把模型输出、工具调用、工具结果、handoff、MCP 审批、reasoning 等统一包装成
+  `RunItem`，方便 Runner 在不同阶段用同一种结构传递和保存。
+- `raw_item` 通常来自 OpenAI Responses API 的 Pydantic 类型，也可能是兼容网关返回的
+  dict；所以代码里经常同时处理 `BaseModel` 和 `dict`。
+- 对 PPT Agent 来说，可以把它理解成“任务执行日志的标准事件结构”：生成大纲、调用模板
+  工具、下载图片、生成文件、人工确认，都可以抽象成类似 item。
+"""
+
 from __future__ import annotations
 
 import abc
@@ -89,6 +100,8 @@ _MISSING_ATTR_SENTINEL = object()
 
 @dataclass
 class RunItemBase(Generic[T], abc.ABC):
+    # 所有 RunItem 的公共基类。`Generic[T]` 表示 raw_item 的具体类型由子类决定，
+    # 例如消息 item 放 ResponseOutputMessage，工具 item 放 ResponseFunctionToolCall。
     agent: Agent[Any]
     """The agent whose run caused this item to be generated."""
 
@@ -106,9 +119,13 @@ class RunItemBase(Generic[T], abc.ABC):
 
     def __post_init__(self) -> None:
         # Store a weak reference so we can release the strong reference later if desired.
+        # RunItem 会记录来源 agent，但长任务/批量任务中强引用会占内存；
+        # 所以这里先准备弱引用，后面可以释放强引用。
         self._agent_ref = weakref.ref(self.agent)
 
     def __getattribute__(self, name: str) -> Any:
+        # 这是 Python 的高级魔法方法：访问任何属性都会经过它。
+        # 这里专门拦截 `agent`，当强引用释放后尝试从弱引用恢复。
         if name == "agent":
             return self._get_agent_via_weakref("agent", "_agent_ref")
         return super().__getattribute__(name)
@@ -143,6 +160,7 @@ class RunItemBase(Generic[T], abc.ABC):
 
     def to_input_item(self) -> TResponseInputItem:
         """Converts this item into an input item suitable for passing to the model."""
+        # Responses API 下一轮输入通常是 dict 形态；Pydantic 模型用 model_dump 转成 dict。
         if isinstance(self.raw_item, dict):
             # We know that input items are dicts, so we can ignore the type error
             return self.raw_item  # type: ignore
@@ -174,6 +192,7 @@ class ToolSearchCallItem(RunItemBase[ToolSearchCallRawItem]):
 
     def to_input_item(self) -> TResponseInputItem:
         """Convert the tool search call into a replayable Responses input item."""
+        # tool_search 是 Responses API 的特殊工具，回放给模型前需要去掉只属于输出侧的字段。
         return _tool_search_item_to_input_item(self.raw_item)
 
 
@@ -232,6 +251,8 @@ def _copy_tool_search_mapping(raw_item: Mapping[str, Any]) -> dict[str, Any]:
 
 def coerce_tool_search_call_raw_item(raw_item: Any) -> ToolSearchCallRawItem:
     """Prefer the typed SDK tool_search call model while tolerating partial snapshots."""
+    # “coerce” 表示宽松转换：优先转成 SDK 类型，失败时保留 dict，
+    # 这样流式半成品快照也不会丢失。
     if isinstance(raw_item, ResponseToolSearchCall):
         return raw_item
     if isinstance(raw_item, Mapping):
@@ -301,6 +322,7 @@ class HandoffOutputItem(RunItemBase[TResponseInputItem]):
     def __post_init__(self) -> None:
         super().__post_init__()
         # Maintain weak references so downstream code can release the strong references when safe.
+        # handoff 同时牵涉 source_agent 和 target_agent，所以两个 agent 都需要弱引用兜底。
         self._source_agent_ref = weakref.ref(self.source_agent)
         self._target_agent_ref = weakref.ref(self.target_agent)
 
@@ -342,6 +364,9 @@ ToolCallItemTypes: TypeAlias = (
     | dict[str, Any]
 )
 """A type that represents a tool call item."""
+# 这里用 TypeAlias 把很多 provider/工具形态收拢成一个“工具调用原始项”概念。
+# 你做 PPT Agent 时也可以有自己的 ToolCallItemTypes，例如 search_image、render_ppt、
+# save_project、export_pdf 等。
 
 
 @dataclass
@@ -365,6 +390,7 @@ class ToolCallItem(RunItemBase[Any]):
     @property
     def tool_name(self) -> str | None:
         """Return the tool name from the raw item, if available."""
+        # raw_item 有时是 dict，有时是 SDK Pydantic 对象，所以取字段要双路径兼容。
         if isinstance(self.raw_item, dict):
             return self.raw_item.get("name")
         return getattr(self.raw_item, "name", None)
@@ -418,6 +444,8 @@ class ToolCallOutputItem(RunItemBase[Any]):
         book-keeping, but the Responses API does not yet accept that parameter. Strip it from the
         payload we send back to the model while keeping the original raw item intact.
         """
+        # 工具输出要回传给模型，必须符合 Responses API 接受的 input item 格式。
+        # 因此这里会清理 shell/apply_patch 等 hosted tool 的内部状态字段。
 
         if isinstance(self.raw_item, dict):
             payload = dict(self.raw_item)
@@ -444,6 +472,8 @@ class ToolCallOutputItem(RunItemBase[Any]):
 @dataclass
 class ReasoningItem(RunItemBase[ResponseReasoningItem]):
     """Represents a reasoning item."""
+    # reasoning item 是模型推理链路的结构化片段，不等同于最终回复。
+    # 学习时重点看它如何被保留/省略，以及如何影响下一轮上下文。
 
     raw_item: ResponseReasoningItem
     """The raw reasoning item."""
@@ -454,6 +484,7 @@ class ReasoningItem(RunItemBase[ResponseReasoningItem]):
 @dataclass
 class MCPListToolsItem(RunItemBase[McpListTools]):
     """Represents a call to an MCP server to list tools."""
+    # MCP list_tools 代表“向外部工具服务器询问有哪些工具可用”。
 
     raw_item: McpListTools
     """The raw MCP list tools call."""
@@ -464,6 +495,7 @@ class MCPListToolsItem(RunItemBase[McpListTools]):
 @dataclass
 class MCPApprovalRequestItem(RunItemBase[McpApprovalRequest]):
     """Represents a request for MCP approval."""
+    # MCP 工具可能有安全风险，所以执行前可能要求人工/策略审批。
 
     raw_item: McpApprovalRequest
     """The raw MCP approval request."""
@@ -501,6 +533,8 @@ ToolApprovalRawItem: TypeAlias = (
 @dataclass
 class ToolApprovalItem(RunItemBase[Any]):
     """Tool call that requires approval before execution."""
+    # 这是 Human-in-the-loop 的核心 item：模型想调用工具，但 Runner 暂停，
+    # 把这个对象交给外部系统/用户决定 approve 或 reject。
 
     raw_item: ToolApprovalRawItem
     """Raw tool call awaiting approval (function, hosted, shell, etc.)."""
@@ -530,6 +564,8 @@ class ToolApprovalItem(RunItemBase[Any]):
 
     def __post_init__(self) -> None:
         """Populate tool_name from the raw item if not provided."""
+        # 审批状态需要稳定 key。这里从 raw_item 自动补齐 name/namespace/lookup_key，
+        # 避免恢复运行时找不到之前审批的是哪个工具。
         if self.tool_name is None:
             # Extract name from raw_item - handle different types
             if isinstance(self.raw_item, dict):
@@ -590,6 +626,8 @@ class ToolApprovalItem(RunItemBase[Any]):
     @property
     def arguments(self) -> str | None:
         """Return tool call arguments if present on the raw item."""
+        # 工具参数可能已经是 JSON 字符串，也可能是 dict/list。
+        # 为了展示、trace、审批面板统一处理，这里最终都尽量返回字符串。
         candidate: Any | None = None
         if isinstance(self.raw_item, dict):
             candidate = self.raw_item.get("arguments")
@@ -645,10 +683,14 @@ RunItem: TypeAlias = (
     | ToolApprovalItem
 )
 """An item generated by an agent."""
+# RunItem 是本文件最重要的联合类型：Runner 内部很多函数只关心“这是一个运行 item”，
+# 再通过 `item.type` 或 isinstance 判断具体是消息、工具、handoff 还是审批。
 
 
 @pydantic.dataclasses.dataclass
 class ModelResponse:
+    # 这里用 `pydantic.dataclasses.dataclass` 而不是标准 dataclass，
+    # 目的是保留 dataclass 写法，同时让 Pydantic 参与类型校验/序列化。
     output: list[TResponseOutputItem]
     """A list of outputs (messages, tool calls, etc) generated by the model"""
 
@@ -667,6 +709,7 @@ class ModelResponse:
 
     def to_input_items(self) -> list[TResponseInputItem]:
         """Convert the output into a list of input items suitable for passing to the model."""
+        # 模型输出在下一轮会变成模型输入，这就是多轮对话/工具循环的基本闭环。
         # Most output items can be replayed via a direct model_dump. Tool-search items carry
         # output-only metadata such as `created_by`, so they must go through the same replay
         # sanitizer used elsewhere in the runtime.
@@ -674,6 +717,8 @@ class ModelResponse:
 
 
 class ItemHelpers:
+    # ItemHelpers 是一组轻量工具函数，负责从复杂 Responses item 里抽取文本、
+    # 构造工具输出、把字符串输入规范化为 API input items。
     @classmethod
     def extract_last_content(cls, message: TResponseOutputItem) -> str:
         """Extracts the last text content or refusal from a message."""
@@ -745,6 +790,8 @@ class ItemHelpers:
         cls, input: str | list[TResponseInputItem]
     ) -> list[TResponseInputItem]:
         """Converts a string or list of input items into a list of input items."""
+        # 用户传字符串时，SDK 自动包成 user message；如果已经是 input item list，
+        # 就保持原结构。这是 Runner 支持简单/高级输入两种模式的入口。
         if isinstance(input, str):
             return [
                 {
@@ -782,6 +829,8 @@ class ItemHelpers:
         input_text/input_image/input_file shapes. Structured outputs may be
         provided as Pydantic models or dicts, or an iterable of such items.
         """
+        # Function tool 的返回值不能直接丢给模型，必须包装成带 call_id 的
+        # `function_call_output`，让模型知道这是谁的执行结果。
 
         converted_output = cls._convert_tool_output(output)
 
@@ -794,6 +843,8 @@ class ItemHelpers:
     @classmethod
     def _convert_tool_output(cls, output: Any) -> str | ResponseFunctionCallOutputItemListParam:
         """Converts a tool return value into an output acceptable by the Responses API."""
+        # 工具既可以返回普通字符串，也可以返回结构化文本/图片/文件。
+        # PPT Agent 以后返回“生成的 PPT 文件、图片素材、HTML 片段”时，可以参考这里的结构化输出思路。
 
         # If the output is either a single or list of the known structured output types, convert to
         # ResponseFunctionCallOutputItemListParam. Else, just stringify.

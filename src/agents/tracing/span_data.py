@@ -1,3 +1,11 @@
+"""Trace Span 的数据结构定义。
+
+中文学习说明：
+- `SpanData` 只描述“这个 span 要导出哪些字段”，不负责开始/结束/上报。
+- 每个子类对应一种观测节点：agent、task、turn、function、generation、handoff、guardrail、MCP 等。
+- 对 PPT Agent 来说，后续可以参考这些类型，为模板解析、套版生成、导出 PPT、质量检查定义自己的 span data。
+"""
+
 from __future__ import annotations
 
 import abc
@@ -12,6 +20,7 @@ class SpanData(abc.ABC):
     """
     Represents span data in the trace.
     """
+    # 抽象基类要求所有 span data 都能 export 成 dict，并声明自己的 type。
 
     @abc.abstractmethod
     def export(self) -> dict[str, Any]:
@@ -30,6 +39,7 @@ class AgentSpanData(SpanData):
     Represents an Agent Span in the trace.
     Includes name, handoffs, tools, and output type.
     """
+    # __slots__ 限制实例可拥有的属性，减少内存占用，也避免拼错属性名后悄悄新增字段。
 
     __slots__ = ("name", "handoffs", "tools", "output_type", "metadata")
 
@@ -63,6 +73,7 @@ class AgentSpanData(SpanData):
 
 class TaskSpanData(SpanData):
     """Represents one top-level Runner run."""
+    # task span 最像业务任务根节点，例如 `generate_ppt`。
 
     __slots__ = ("name", "usage", "metadata")
 
@@ -97,6 +108,7 @@ class TaskSpanData(SpanData):
 
 class TurnSpanData(SpanData):
     """Represents one agent loop turn."""
+    # turn span 帮助你看清 Agent 到底跑了几轮，是否陷入工具循环。
 
     __slots__ = ("turn", "agent_name", "usage", "metadata")
 
@@ -137,6 +149,8 @@ class FunctionSpanData(SpanData):
     Represents a Function Span in the trace.
     Includes input, output and MCP data (if applicable).
     """
+    # function span 是本地工具观测。input/output 都可能包含敏感数据，
+    # 正式环境需要脱敏或关闭敏感 trace。
 
     __slots__ = ("name", "input", "output", "mcp_data")
 
@@ -171,6 +185,7 @@ class GenerationSpanData(SpanData):
     Represents a Generation Span in the trace.
     Includes input, output, model, model configuration, and usage.
     """
+    # generation span 记录 LLM 调用细节，适合分析 token、模型参数和响应质量。
 
     __slots__ = (
         "input",
@@ -214,6 +229,7 @@ class ResponseSpanData(SpanData):
     Represents a Response Span in the trace.
     Includes response and input.
     """
+    # response span 倾向记录 response_id/usage，不一定保存完整输入输出，风险更低。
 
     __slots__ = ("response", "input", "usage")
 
@@ -246,6 +262,7 @@ class HandoffSpanData(SpanData):
     Represents a Handoff Span in the trace.
     Includes source and destination agents.
     """
+    # handoff span 是多 agent 编排里判断“为什么切到另一个 agent”的线索。
 
     __slots__ = ("from_agent", "to_agent")
 
@@ -270,6 +287,7 @@ class CustomSpanData(SpanData):
     Represents a Custom Span in the trace.
     Includes name and data property bag.
     """
+    # custom span 用来记录业务自定义步骤；PPT 项目可以用它记录模板匹配、版式修复等。
 
     __slots__ = ("name", "data")
 
@@ -294,6 +312,7 @@ class GuardrailSpanData(SpanData):
     Represents a Guardrail Span in the trace.
     Includes name and triggered status.
     """
+    # guardrail span 只记录规则名和是否触发，适合作为安全/质量审计事件。
 
     __slots__ = ("name", "triggered")
 
@@ -318,6 +337,7 @@ class TranscriptionSpanData(SpanData):
     Represents a Transcription Span in the trace.
     Includes input, output, model, and model configuration.
     """
+    # 语音相关 span 当前对 PPT Agent 暂时不是主线，只需知道它属于音频输入观测。
 
     __slots__ = (
         "input",
@@ -429,6 +449,7 @@ class MCPListToolsSpanData(SpanData):
     Represents an MCP List Tools Span in the trace.
     Includes server and result.
     """
+    # MCP 工具发现 span：记录哪个 server 返回了哪些工具。
 
     __slots__ = (
         "server",

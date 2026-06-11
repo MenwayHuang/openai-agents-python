@@ -1,3 +1,12 @@
+"""MCP 工具与 Agents SDK FunctionTool 之间的适配工具。
+
+中文学习说明：
+- MCP server 暴露的是 MCPTool；Agent Runner 能执行的是 SDK 的 FunctionTool。
+- `MCPUtil.to_function_tool()` 把 MCPTool 包成 FunctionTool，模型看到的是普通函数工具，
+  真正执行时再转回 `server.call_tool(...)`。
+- 对 PPT Agent 来说，这个桥接思路很重要：任何外部能力都可以先封装成统一 Tool，再交给 Agent 规划。
+"""
+
 from __future__ import annotations
 
 import asyncio
@@ -87,6 +96,7 @@ class HttpClientFactory(Protocol):
 @dataclass
 class ToolFilterContext:
     """Context information available to tool filter functions."""
+    # 动态工具过滤函数会拿到这些上下文，决定某个工具当前是否可暴露给 agent。
 
     run_context: RunContextWrapper[Any]
     """The current run context."""
@@ -181,6 +191,7 @@ def create_static_tool_filter(
     Returns:
         A ToolFilterStatic if any filtering is specified, None otherwise.
     """
+    # 静态 allow/block list 是生产环境最常用的安全方式之一：只暴露当前业务需要的工具。
     if allowed_tool_names is None and blocked_tool_names is None:
         return None
 
@@ -195,9 +206,12 @@ def create_static_tool_filter(
 
 class MCPUtil:
     """Set of utilities for interop between MCP and Agents SDK tools."""
+    # 这是 MCP 集成的核心工具类：发现 MCP tools、重命名去冲突、转换成 FunctionTool、
+    # 调用 MCP 工具并把结果转成模型可读输出。
 
     @staticmethod
     def _extract_static_meta(tool: Any) -> dict[str, Any] | None:
+        # MCP tool 的 `_meta` 可能藏在不同字段里，这里做兼容提取。
         meta = getattr(tool, "meta", None)
         if isinstance(meta, dict):
             return copy.deepcopy(meta)
@@ -230,6 +244,8 @@ class MCPUtil:
         reserved_tool_names: set[str] | None = None,
     ) -> list[Tool]:
         """Get all function tools from a list of MCP servers."""
+        # 从多个 MCP server 拉工具，并转换成 SDK FunctionTool。
+        # include_server_in_tool_names=True 时会给工具名加 server 前缀，避免重名冲突。
         tools: list[Tool] = []
         tool_names: set[str] = set()
 
@@ -296,6 +312,7 @@ class MCPUtil:
         run_context: RunContextWrapper[Any],
         agent: AgentBase,
     ) -> list[MCPTool]:
+        # list_tools 也打 trace span，便于排查 MCP server 返回了哪些工具。
         with mcp_tools_span(server=server.name) as span:
             tools = await server.list_tools(run_context, agent)
             span.span_data.result = [tool.name for tool in tools]
@@ -404,6 +421,8 @@ class MCPUtil:
         Keys are batch-local `(server_index, tool_index)` coordinates, so this mapping does
         not depend on object identity or cross any serialization boundary.
         """
+        # 多个 MCP server 可能都有 `search`、`read` 这类通用工具名。
+        # 这里按 server_name + tool_name 生成稳定公开名，并在过长/冲突时加 hash。
         base_names = [
             cls._build_prefixed_tool_base_name(server.name, tool.name)
             for _, server, tools in server_tool_batches
@@ -473,6 +492,8 @@ class MCPUtil:
         policies. If the server uses a callable approval policy, approvals default
         to required to avoid bypassing dynamic checks.
         """
+        # 转换结果是一个 FunctionTool：模型只看到 name/description/schema；
+        # 执行时 invoke_func_impl 会调用 MCPUtil.invoke_mcp_tool，再转到 server.call_tool。
         tool_public_name = tool_name_override or tool.name
         static_meta = cls._extract_static_meta(tool)
         invoke_func_impl = functools.partial(
@@ -492,6 +513,7 @@ class MCPUtil:
             schema["properties"] = {}
 
         if convert_schemas_to_strict:
+            # OpenAI strict schema 要求更严格。转换失败时降级为非 strict，避免 MCP schema 不规范导致完全不可用。
             # ``ensure_strict_json_schema`` mutates the schema in place and may raise
             # partway through, leaving strict-mode artifacts (e.g. ``required`` or
             # ``additionalProperties: false``) on a schema we still serve as
@@ -549,6 +571,8 @@ class MCPUtil:
         tool_name: str,
         arguments: dict[str, Any] | None,
     ) -> dict[str, Any] | None:
+        # meta_resolver 允许调用 MCP tool 前动态生成 `_meta`，
+        # 比如传租户、trace id、权限上下文等服务端元数据。
         meta_resolver = getattr(server, "tool_meta_resolver", None)
         if meta_resolver is None:
             return None
@@ -581,6 +605,8 @@ class MCPUtil:
         tool_display_name: str | None = None,
     ) -> ToolOutput:
         """Invoke an MCP tool and return the result as ToolOutput."""
+        # FunctionTool 执行入口：模型给的是 JSON 字符串参数，这里先解析校验，
+        # 再调用 MCP server，最后把 MCP 结果转换成 SDK ToolOutput。
         tool_name_for_display = tool_display_name or tool.name
         json_decode_error: Exception | None = None
         try:
@@ -612,6 +638,7 @@ class MCPUtil:
             resolved_meta = await cls._resolve_meta(server, context, tool.name, json_data)
             merged_meta = cls._merge_mcp_meta(resolved_meta, meta)
             call_task = asyncio.create_task(
+                # 单独创建 task 便于处理取消：外层取消时可以取消 MCP call 并清理。
                 server.call_tool(tool.name, json_data)
                 if merged_meta is None
                 else server.call_tool(tool.name, json_data, meta=merged_meta)

@@ -1,5 +1,9 @@
 from __future__ import annotations
 
+# 学习提示：这是 Realtime 能力中最贴近 OpenAI WebSocket 协议的实现文件。
+# 它负责建连、发送客户端事件、解析服务端事件、音频 base64 编解码、工具调用事件转换。
+# 当前 PPT Agent 不需要深入这里，但做实时语音/实时协作时，这是 Provider 适配的关键样板。
+
 import asyncio
 import base64
 import inspect

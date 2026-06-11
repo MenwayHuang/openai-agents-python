@@ -1,5 +1,12 @@
 from __future__ import annotations
 
+# 中文学习注释：
+# 这个文件定义 handoff：让一个 Agent 把对话/任务转交给另一个 Agent。
+# 在模型看来，handoff 是一个特殊工具调用；在 runtime 看来，它会改变 current_agent，
+# 并准备下一轮输入历史。它和 agent.as_tool 的区别是：
+# - handoff：新 Agent 接管后续对话；
+# - as_tool：子 Agent 像普通工具一样被调用，结果返回给原 Agent。
+
 import inspect
 import json
 import weakref
@@ -26,6 +33,7 @@ from .history import (
 )
 
 if TYPE_CHECKING:
+    # 避免运行时循环导入 Agent，同时保留类型检查能力。
     from ..agent import Agent, AgentBase
 
 
@@ -41,6 +49,8 @@ OnHandoffWithoutInput = Callable[[RunContextWrapper[Any]], Any]
 
 @dataclass(frozen=True)
 class HandoffInputData:
+    # HandoffInputData 是 input_filter/nest_handoff_history 能操作的数据包。
+    # frozen=True 表示不可原地修改，通常用 clone() 创建修改后的副本。
     input_history: str | tuple[TResponseInputItem, ...]
     """
     The input history before `Runner.run()` was called.
@@ -80,6 +90,7 @@ class HandoffInputData:
         ```
         """
 
+        # dataclasses.replace 会复制 dataclass，并替换传入字段。
         return dataclasses_replace(self, **kwargs)
 
 
@@ -98,6 +109,8 @@ class Handoff(Generic[TContext, TAgent]):
     which agent should handle the user's request, and sub-agents that specialize in different areas
     like billing, account management, etc.
     """
+    # Handoff 本质是“特殊工具定义 + 转交目标元数据”。
+    # input_json_schema 只描述 handoff 工具参数，不等于新 Agent 的完整输入。
 
     tool_name: str
     """The name of the tool that represents the handoff."""
@@ -164,12 +177,15 @@ class Handoff(Generic[TContext, TAgent]):
         default=None, init=False, repr=False
     )
     """Weak reference to the target agent when constructed via `handoff()`."""
+    # weakref 避免 Handoff 和 Agent 互相强引用导致对象难以释放。
 
     def get_transfer_message(self, agent: AgentBase[Any]) -> str:
+        # handoff 工具输出会告诉模型已经转给哪个 assistant。
         return json.dumps({"assistant": agent.name})
 
     @classmethod
     def default_tool_name(cls, agent: AgentBase[Any]) -> str:
+        # 默认工具名类似 transfer_to_billing_agent，符合函数名风格。
         return _transforms.transform_string_function_style(f"transfer_to_{agent.name}")
 
     @classmethod
@@ -190,6 +206,8 @@ def handoff(
     nest_handoff_history: bool | None = None,
     is_enabled: bool | Callable[[RunContextWrapper[Any], Agent[Any]], MaybeAwaitable[bool]] = True,
 ) -> Handoff[TContext, Agent[TContext]]: ...
+# @overload 只给类型检查器看，运行时真正实现是下面那个 handoff()。
+# 这里支持“无输入 handoff”“带 input_type 的 handoff”等多种调用签名。
 
 
 @overload
@@ -251,11 +269,14 @@ def handoff(
             context and agent and returns whether the handoff is enabled. Disabled handoffs are
             hidden from the LLM at runtime.
     """
+    # handoff() 是创建 Handoff 对象的便捷函数。
+    # 它会生成工具名/描述/schema，并创建 _invoke_handoff 回调。
 
     if input_type is not None and on_handoff is None:
         raise UserError("You must provide on_handoff when input_type is provided")
     type_adapter: TypeAdapter[Any] | None
     if input_type is not None:
+        # 如果指定 input_type，模型调用 handoff 工具时必须提供符合该类型的 JSON 参数。
         if not callable(on_handoff):
             raise UserError("on_handoff must be callable")
         sig = inspect.signature(on_handoff)
@@ -265,6 +286,7 @@ def handoff(
         type_adapter = TypeAdapter(input_type)
         input_json_schema = type_adapter.json_schema()
     else:
+        # 无 input_type 时，handoff 工具参数 schema 为空；on_handoff 只能接收 context。
         type_adapter = None
         input_json_schema = {}
         if on_handoff is not None:
@@ -275,6 +297,8 @@ def handoff(
     async def _invoke_handoff(
         ctx: RunContextWrapper[Any], input_json: str | None = None
     ) -> Agent[TContext]:
+        # runtime 执行 handoff 工具时调用这里。
+        # on_handoff 只用于副作用/记账，最后总是返回 handoff() 捕获的目标 agent。
         if input_type is not None and type_adapter is not None:
             if input_json is None:
                 _error_tracing.attach_error_to_current_span(
@@ -286,6 +310,7 @@ def handoff(
                 raise ModelBehaviorError("Handoff function expected non-null input, but got None")
 
             validated_input = _json.validate_json(
+                # 用 Pydantic TypeAdapter 校验模型给 handoff 工具的 JSON 参数。
                 json_str=input_json,
                 type_adapter=type_adapter,
                 partial=False,
@@ -308,8 +333,10 @@ def handoff(
     # Always ensure the input JSON schema is in strict mode. If needed, we can make this
     # configurable in the future.
     input_json_schema = ensure_strict_json_schema(input_json_schema)
+    # handoff 工具参数也使用 strict schema，提高模型输出正确率。
 
     async def _is_enabled(ctx: RunContextWrapper[Any], agent_base: AgentBase[Any]) -> bool:
+        # is_enabled 如果是函数，这里包装成统一 async 形式。
         from ..agent import Agent
 
         assert callable(is_enabled), "is_enabled must be callable here"
@@ -320,6 +347,7 @@ def handoff(
         return bool(result)
 
     handoff_obj = Handoff(
+        # 创建真正 Handoff 配置对象，供 turn_preparation 暴露成模型可调用工具。
         tool_name=tool_name,
         tool_description=tool_description,
         input_json_schema=input_json_schema,

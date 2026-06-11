@@ -1,4 +1,8 @@
-"""Minimal realtime session implementation for voice agents."""
+"""Minimal realtime session implementation for voice agents.
+
+学习提示：RealtimeRunner 类似普通 Runner，但它返回的是一个长期存在的 RealtimeSession，
+用于持续收发音频/文本/工具事件，而不是一次请求一次响应。
+"""
 
 from __future__ import annotations
 
@@ -65,6 +69,7 @@ class RealtimeRunner:
             ```
         """
         # Create and return the connection
+        # RealtimeSession 本身是 async context manager，真正连接生命周期由 session 管理。
         session = RealtimeSession(
             model=self._model,
             agent=self._starting_agent,

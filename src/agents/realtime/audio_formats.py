@@ -12,10 +12,14 @@ from openai.types.realtime.realtime_audio_formats import (
 
 from ..logger import logger
 
+# 学习提示：把用户传入的音频格式字符串/dict/OpenAI 类型统一转成 Realtime API 接受的类型。
+# 这类“入口兼容层”很常见：对外宽松接收，对内统一结构。
+
 
 def to_realtime_audio_format(
     input_audio_format: str | RealtimeAudioFormats | Mapping[str, Any] | None,
 ) -> RealtimeAudioFormats | None:
+    # Mapping 是 collections.abc 里的“像 dict 一样的对象”抽象。
     format: RealtimeAudioFormats | None = None
     if input_audio_format is not None:
         if isinstance(input_audio_format, str):

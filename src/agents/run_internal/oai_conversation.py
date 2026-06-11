@@ -1,6 +1,9 @@
 """
 Conversation-state helpers used during agent runs. This module should only host internal
 tracking and normalization logic for conversation-aware execution, not public-facing APIs.
+
+学习提示：这个模块跟踪 OpenAI 服务端 conversation/previous_response_id 相关状态，
+用于去重、恢复和把本地 RunItem 转成可回放的 Responses input item。
 """
 
 from __future__ import annotations

@@ -11,6 +11,10 @@ ApplyPatchOperationType = Literal["create_file", "update_file", "delete_file"]
 
 _DATACLASS_KWARGS = {"slots": True} if sys.version_info >= (3, 10) else {}
 
+# 学习提示：这个文件定义 apply_patch 编辑器协议。Protocol 是 Python 的结构化类型：
+# 只要对象有 create_file/update_file/delete_file 这些方法，就可被当作 ApplyPatchEditor。
+# runtime_checkable 允许运行时用 isinstance 检查 Protocol。
+
 
 @dataclass(**_DATACLASS_KWARGS)
 class ApplyPatchOperation:
@@ -21,6 +25,7 @@ class ApplyPatchOperation:
     diff: str | None = None
     ctx_wrapper: RunContextWrapper | None = None
     move_to: str | None = None
+    # slots=True 会减少实例字典开销，也限制动态新增属性；这里只在 Python 3.10+ 启用。
 
 
 @dataclass(**_DATACLASS_KWARGS)
@@ -29,6 +34,7 @@ class ApplyPatchResult:
 
     status: Literal["completed", "failed"] | None = None
     output: str | None = None
+    # status/output 是宿主编辑器返回给 Agent 的最小结果信息。
 
 
 @runtime_checkable

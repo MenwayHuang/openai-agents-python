@@ -1,5 +1,11 @@
 from __future__ import annotations
 
+# 中文学习注释：
+# 这个文件处理 handoff 时的历史传递。
+# 默认情况下，新 Agent 可能需要知道之前发生过什么，但不一定需要逐条看到所有工具调用。
+# nest_handoff_history 会把旧对话压成一条“conversation history”消息，
+# 同时过滤掉容易重复/干扰的新 Agent 输入的工具项。
+
 import json
 from copy import deepcopy
 from typing import TYPE_CHECKING, Any, cast
@@ -12,6 +18,7 @@ from ..items import (
 )
 
 if TYPE_CHECKING:
+    # 只在类型检查时导入，避免 handoffs.__init__ 与 history 互相运行时依赖。
     from . import HandoffHistoryMapper, HandoffInputData
 
 __all__ = [
@@ -35,6 +42,8 @@ _SUMMARY_ONLY_INPUT_TYPES = {
     # Reasoning items can become orphaned after other summarized items are filtered.
     "reasoning",
 }
+# 这些类型会被写进摘要，但不会原样转发给下一个 Agent，
+# 否则新 Agent 可能看到重复工具调用/孤立 reasoning。
 
 
 def set_conversation_history_wrappers(
@@ -46,6 +55,7 @@ def set_conversation_history_wrappers(
 
     Pass ``None`` to leave either side unchanged.
     """
+    # 允许应用自定义历史摘要边界标记，便于 prompt 侧解析或测试。
 
     global _conversation_history_start, _conversation_history_end
     if start is not None:
@@ -74,6 +84,12 @@ def nest_handoff_history(
     history_mapper: HandoffHistoryMapper | None = None,
 ) -> HandoffInputData:
     """Summarize the previous transcript for the next agent."""
+    # 核心流程：
+    # 1. 规范化原始 input_history；
+    # 2. 展开已经嵌套过的历史摘要；
+    # 3. 把 pre_handoff/new_items 转成普通 input item；
+    # 4. 用 mapper 生成摘要消息；
+    # 5. 返回新的 HandoffInputData，给下一个 Agent 使用。
 
     normalized_history = _normalize_input_history(handoff_input_data.input_history)
     flattened_history = _flatten_nested_history_messages(normalized_history)
@@ -82,6 +98,7 @@ def nest_handoff_history(
     pre_items_as_inputs: list[TResponseInputItem] = []
     filtered_pre_items: list[RunItem] = []
     for run_item in handoff_input_data.pre_handoff_items:
+        # ToolApprovalItem 是等待人工处理的内部状态，不应原样交给新 Agent。
         if isinstance(run_item, ToolApprovalItem):
             continue
         plain_input = _run_item_to_plain_input(run_item)
@@ -102,6 +119,7 @@ def nest_handoff_history(
     transcript = flattened_history + pre_items_as_inputs + new_items_as_inputs
 
     mapper = history_mapper or default_handoff_history_mapper
+    # 默认 mapper 生成一条 assistant 消息；用户也可以自定义更智能的摘要策略。
     history_items = mapper(transcript)
 
     return handoff_input_data.clone(
@@ -116,6 +134,7 @@ def default_handoff_history_mapper(
     transcript: list[TResponseInputItem],
 ) -> list[TResponseInputItem]:
     """Return a single assistant message summarizing the transcript."""
+    # 默认实现不是调用 LLM 摘要，而是把历史格式化成一条可读消息。
 
     summary_message = _build_summary_message(transcript)
     return [summary_message]
@@ -134,6 +153,7 @@ def _run_item_to_plain_input(run_item: RunItem) -> TResponseInputItem:
 
 
 def _build_summary_message(transcript: list[TResponseInputItem]) -> TResponseInputItem:
+    # 用 start/end wrapper 包住历史，后续如果再次 handoff，可以识别并展开。
     transcript_copy = [deepcopy(item) for item in transcript]
     if transcript_copy:
         summary_lines = [
@@ -159,6 +179,7 @@ def _build_summary_message(transcript: list[TResponseInputItem]) -> TResponseInp
 
 
 def _format_transcript_item(item: TResponseInputItem) -> str:
+    # 简单 role/content 消息走 legacy 文本格式；复杂 item 用 JSON 格式保真。
     role = item.get("role")
     if isinstance(role, str):
         content = item.get("content")
@@ -213,6 +234,8 @@ def _stringify_content(content: Any) -> str:
 def _flatten_nested_history_messages(
     items: list[TResponseInputItem],
 ) -> list[TResponseInputItem]:
+    # 如果历史里已经包含 <CONVERSATION HISTORY> 摘要，
+    # 再次 handoff 时先还原出来，避免摘要套摘要越来越难读。
     flattened: list[TResponseInputItem] = []
     for item in items:
         nested_transcript = _extract_nested_history_transcript(item)
@@ -226,6 +249,7 @@ def _flatten_nested_history_messages(
 def _extract_nested_history_transcript(
     item: TResponseInputItem,
 ) -> list[TResponseInputItem] | None:
+    # 从一条 assistant content 中识别 wrapper，并尽力解析每一条历史记录。
     content = item.get("content")
     if not isinstance(content, str):
         return None
@@ -280,6 +304,9 @@ def _starts_numbered_summary_record(line: str) -> bool:
 
 
 def _parse_summary_line(line: str) -> TResponseInputItem | None:
+    # 兼容两种摘要行：
+    # 1. JSON item；
+    # 2. legacy 的 "role: content" 文本。
     stripped = line.strip()
     if not stripped:
         return None
@@ -351,6 +378,7 @@ def _split_role_and_name(role_text: str) -> tuple[str, str | None]:
 
 def _should_forward_pre_item(input_item: TResponseInputItem) -> bool:
     """Return False when the previous transcript item is represented in the summary."""
+    # 之前的 assistant/tool/reasoning 信息已经进入摘要，不再原样转发。
     role_candidate = input_item.get("role")
     if isinstance(role_candidate, str) and role_candidate == "assistant":
         return False

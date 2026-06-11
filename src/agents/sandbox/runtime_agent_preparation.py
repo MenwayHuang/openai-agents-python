@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+# 学习提示：这个文件负责把 SandboxAgent 转成普通 Agent 可运行形态。
+# 它会合并基础提示、文件系统说明、远端挂载安全策略、capability 提供的工具和指令。
+
 import inspect
 import textwrap
 from collections.abc import Awaitable, Callable, Sequence
@@ -26,6 +29,7 @@ from .util.deep_merge import deep_merge
 
 @lru_cache(maxsize=1)
 def get_default_sandbox_instructions() -> str | None:
+    # lru_cache(maxsize=1) 缓存默认提示文件，避免每次运行都重新读包资源。
     try:
         return (
             files("agents.sandbox")
@@ -39,6 +43,7 @@ def get_default_sandbox_instructions() -> str | None:
 
 
 def clone_capabilities(capabilities: Sequence[Capability]) -> list[Capability]:
+    # capability 是有状态对象，运行前 clone 一份，避免不同 session 互相污染。
     return [capability.clone() for capability in capabilities]
 
 
