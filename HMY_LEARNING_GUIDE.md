@@ -32,6 +32,27 @@ Runner.run(...)
   -> turn_resolution 解析模型输出并执行工具、handoff 或最终输出。
 ```
 
+## 再回答：为什么 Model 抽象里会出现 TResponseInputItem
+
+你看到的疑惑是对的：`TResponseInputItem` 不是一个完全中立的模型输入类型，它在 `src/agents/items.py` 中实际是 OpenAI Python SDK 的类型别名：
+
+```python
+from openai.types.responses import ResponseInputItemParam
+
+TResponseInputItem = ResponseInputItemParam
+```
+
+所以 `src/agents/models/interface.py` 里的 `Model` 抽象虽然叫“模型抽象”，但它不是完全厂商无关的领域模型接口。它采用了 OpenAI Responses API 的 item 结构作为这个 SDK 的内部统一中间格式。
+
+这对 OpenAI 官方 SDK 是合理的，因为它的默认主线就是 OpenAI Responses API。Chat Completions、LiteLLM、AnyLLM 等其它路径也会在 provider/model adapter 中转换到这个统一格式，再交给 Runner、Tool、Session、Handoff、Tracing 使用。官方文档也把非 OpenAI 模型或混合模型栈放在 provider/adapter 层处理：[Agents models and providers](https://developers.openai.com/api/docs/guides/agents/models#providers-and-transport)。
+
+但你自己的 PPT Agent 项目不建议照搬这一点。更好的做法是先定义自己的中立内部类型，例如 `AgentMessage`、`ToolCall`、`ToolResult`、`ModelRequest`、`ModelResponse`，再让 `OpenAIProvider`、`ClaudeProvider`、`DeepSeekProvider` 各自负责把中立类型转换成对应厂商 API 的请求和响应。
+
+一句话记住：
+
+- 学这个仓库时，把 `TResponseInputItem` 理解成“OpenAI Agents SDK 内部统一消息格式”。
+- 做自己的 PPT Agent 时，不要让最底层抽象直接依赖 OpenAI 类型，要把厂商类型隔离在 provider adapter 里。
+
 ## 推荐阅读顺序
 
 ### 第一轮：只看主线
