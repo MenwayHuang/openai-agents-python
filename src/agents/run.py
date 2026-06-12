@@ -218,6 +218,13 @@ def _sandbox_memory_input(
 class Runner:
     # Runner 是用户最常接触的“静态门面”。
     # 它不保存状态，只把调用转给 DEFAULT_AGENT_RUNNER。
+    #
+    # 业务代码通常这样用：
+    # result = await Runner.run(agent, "用户问题", run_config=RunConfig(...))
+    #
+    # 你自研 PPT Agent 时，也可以保留类似门面：
+    # - 外部 API 层只调用一个简洁入口。
+    # - 内部执行器负责 trace、memory、tool、handoff、eval 等复杂状态。
 
     @classmethod
     async def run(
@@ -475,6 +482,14 @@ class AgentRunner:
     """
     # AgentRunner 是本文件真正的执行器。
     # 它维护 turn 计数、当前 agent、session 持久化、trace、RunState 恢复等运行时状态。
+    #
+    # 如果把 Agent runtime 拆成三层：
+    # - Agent：静态配置，描述角色和能力。
+    # - AgentRunner：一次 run 的全局状态机，处理 session、trace、恢复、中断和收尾。
+    # - run_internal/run_loop.py：单个 turn 的执行细节，处理模型调用和工具结果。
+    #
+    # 学源码时不要把所有逻辑都塞进 Agent 类。OpenAI SDK 的设计是让 Agent 保持轻，
+    # 把运行过程放在 Runner 和 run_internal 中。
 
     async def run(
         self,

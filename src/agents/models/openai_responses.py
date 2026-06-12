@@ -421,6 +421,15 @@ class OpenAIResponsesModel(Model):
     Implementation of `Model` that uses the OpenAI Responses API.
     """
     # 这是当前 SDK 最核心的 OpenAI 模型适配器。Runner 调模型时最终会落到这里。
+    #
+    # 注意它和 OpenAIProvider 的分工：
+    # - OpenAIProvider 负责“选出这个类的实例”，处理默认模型、API key、base_url、
+    #   HTTP/WebSocket 传输选择和缓存。
+    # - OpenAIResponsesModel 负责“使用已经选定的模型发请求”，把 SDK 内部参数转成
+    #   Responses API payload，再把返回值转成 ModelResponse 或流式事件。
+    #
+    # 它不知道 Agent 的业务目标，也不执行工具；工具调用只是模型输出的一种 item，
+    # 后续由 run_internal/turn_resolution.py 解析和执行。
 
     def __init__(
         self,
@@ -483,6 +492,11 @@ class OpenAIResponsesModel(Model):
     ) -> ModelResponse:
         # 非流式路径：请求 Responses API，记录 response_span，转换 usage，
         # 最后返回统一 ModelResponse。
+        #
+        # 读这个方法时重点看三层转换：
+        # 1. _fetch_response 把 Agent 输入/工具/handoff/schema 转成 API 请求。
+        # 2. OpenAI 服务返回 Response，其中 output 里可能包含文本、工具调用、推理项等。
+        # 3. 这里包装成 ModelResponse，让 Runner 后续统一处理。
         with response_span(disabled=tracing.is_disabled()) as span_response:
             try:
                 response = await self._fetch_response(
@@ -568,6 +582,8 @@ class OpenAIResponsesModel(Model):
         Yields a partial message as it is generated, as well as the usage information.
         """
         # 流式路径：产出 Responses API 的 stream events，Runner 再把它们转成 RunItem 事件。
+        # 对前端 SSE 来说，这里还不是最终业务事件；你的后端通常会再包装成
+        # content_delta、tool_call、tool_result、done 等更稳定的业务事件。
         with response_span(disabled=tracing.is_disabled()) as span_response:
             try:
                 stream = await self._fetch_response(

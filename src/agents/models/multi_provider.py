@@ -81,6 +81,16 @@ class MultiProvider(ModelProvider):
     callers opt into the second behavior without breaking the historical alias semantics.
     """
     # ModelProvider 的实现：把字符串模型名解析到具体底层 provider。
+    #
+    # 它解决的是“一个项目里有多种模型来源”的问题。
+    # 例如：
+    # - "gpt-5.4-mini" 没有前缀，默认走 OpenAIProvider。
+    # - "openai/gpt-5.4-mini" 可以作为 OpenAIProvider 的别名。
+    # - "litellm/..." 会走 LiteLLM 扩展 provider。
+    # - "any-llm/..." 会走 AnyLLM 扩展 provider。
+    #
+    # 这就是 Provider 层比直接 new Model 更灵活的地方：
+    # 业务代码只传一个字符串，路由、默认值、第三方 provider 选择都集中在这里处理。
 
     def __init__(
         self,
@@ -237,6 +247,9 @@ class MultiProvider(ModelProvider):
         Returns:
             A Model.
         """
+        # 这里返回的不是 provider，而是最终可被 Runner 调用的 Model。
+        # 也就是说 MultiProvider 只参与“解析和路由”，真正发请求仍由子 provider 返回的
+        # Model 实例完成。
         # Bare model names are always delegated directly to the OpenAI provider. That provider can
         # still point at an OpenAI-compatible endpoint via ``base_url``.
         if model_name is None:

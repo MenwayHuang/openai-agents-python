@@ -2,9 +2,15 @@
 
 中文学习说明：
 - Agent runtime 不直接依赖某一个具体 API，而是通过 `Model` 接口调用 LLM。
-- `get_response()` 是普通非流式调用；`stream_response()` 是流式调用。
-- `ModelProvider` 负责按模型名返回具体 Model 实例。你未来自研 Agent 时，可以用同样方式
-  把 OpenAI、Claude、本地模型或自建网关封装成统一接口。
+- `Model` 表示“已经解析好的一个模型调用器”，它负责真正发请求、处理流式事件、
+  把 provider 原始响应转换成 SDK 内部统一的 `ModelResponse`。
+- `ModelProvider` 表示“模型工厂和注册表”，它负责根据字符串模型名、默认配置、
+  provider 前缀、传输方式和缓存策略，返回一个具体 `Model` 实例。
+- 这两个抽象不要混在一起：如果你已经手里有 `Model` 实例，可以直接传给 Agent 或
+  RunConfig；如果你只传 `"gpt-5.4-mini"` 这种字符串，就必须有 `ModelProvider`
+  负责把字符串解析成可调用的 `Model`。
+- 你未来自研 Agent 时，可以用同样方式把 OpenAI、Claude、国产模型、本地模型或自建
+  Go/Python 网关封装成统一接口。
 """
 
 from __future__ import annotations
@@ -47,8 +53,17 @@ class ModelTracing(enum.Enum):
 
 class Model(abc.ABC):
     """The base interface for calling an LLM."""
-    # 抽象基类定义模型能力边界。Runner 只认识这个接口，不关心底层是 Responses、
-    # Chat Completions、WebSocket，还是你自己的 Go/Python API 网关。
+    # 抽象基类定义“已经选好的模型如何被调用”。Runner 只认识这个接口，
+    # 不关心底层是 Responses、Chat Completions、WebSocket，还是你自己的
+    # Go/Python API 网关。
+    #
+    # 你可以把 Model 理解成“可执行的 LLM 客户端适配器”：
+    # - OpenAIResponsesModel 会调用 client.responses.create(...)。
+    # - OpenAIChatCompletionsModel 会调用 client.chat.completions.create(...)。
+    # - 你自己接 Claude/DeepSeek/本地模型时，也应该实现这个接口。
+    #
+    # 它不是 Agent，因为它不知道任务目标、工具策略、handoff、guardrail 的运行逻辑；
+    # 它只负责“给定输入和工具定义，产出模型响应或流式事件”。
 
     async def close(self) -> None:
         """Release any resources held by the model.
@@ -151,6 +166,14 @@ class ModelProvider(abc.ABC):
     """
     # Provider 是模型注册/查找层。RunConfig 里设置 model_provider 后，
     # Runner 会通过它把字符串模型名解析成具体 Model。
+    #
+    # 为什么不直接只有 Model？
+    # - 业务代码通常只想写 model="gpt-5.4-mini"，不想手动 new 一个底层客户端。
+    # - 同一个进程可能要根据 "openai/xxx"、"litellm/xxx"、"any-llm/xxx" 路由到不同 provider。
+    # - Provider 可以集中管理 API key、base_url、共享 HTTP 连接池、WebSocket model 缓存和关闭逻辑。
+    # - RunConfig 可以用一个 provider 覆盖整条 workflow，而不需要改每个 Agent 的 model 字段。
+    #
+    # 所以：Model 是“做一次模型调用的人”，ModelProvider 是“按名字找到这个人，并管理它的人”。
 
     @abc.abstractmethod
     def get_model(self, model_name: str | None) -> Model:

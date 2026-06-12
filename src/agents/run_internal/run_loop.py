@@ -1403,6 +1403,9 @@ async def run_single_turn_streamed(
 
     handoffs = await get_handoffs(execution_agent, context_wrapper)
     model = get_model(execution_agent, run_config)
+    # 这里拿到的一定是 Model 实例，而不是字符串。
+    # 如果 Agent/RunConfig 传入的是字符串，刚才的 get_model 已经通过 ModelProvider 解析完了。
+    # 从这一行开始，run_loop 不再关心模型来自 OpenAI、Claude 还是自建网关。
     model_settings = get_model_settings(execution_agent, run_config)
     model_settings = maybe_reset_tool_choice(public_agent, tool_use_tracker, model_settings)
 

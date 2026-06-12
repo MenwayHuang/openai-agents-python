@@ -57,6 +57,15 @@ def shared_http_client() -> httpx.AsyncClient:
 
 class OpenAIProvider(ModelProvider):
     # OpenAIProvider 是 ModelProvider 的具体实现，负责按模型名创建/缓存 Model。
+    #
+    # 它本身不直接代表某一次 LLM 调用，而是负责回答：
+    # - 当前应该走 Responses 还是 Chat Completions。
+    # - 当前应该走 HTTP 还是 Responses WebSocket。
+    # - AsyncOpenAI client 应该如何创建和复用。
+    # - 如果 model_name 为空，应该用哪个默认模型。
+    #
+    # 因此 `OpenAIProvider.get_model("gpt-5.4-mini")` 返回的才是具体可调用的
+    # `OpenAIResponsesModel`、`OpenAIResponsesWSModel` 或 `OpenAIChatCompletionsModel`。
     def __init__(
         self,
         *,
@@ -219,6 +228,16 @@ class OpenAIProvider(ModelProvider):
             self._clear_ws_loop_cache_entry(loop, loop_cache)
 
     def get_model(self, model_name: str | None) -> Model:
+        """Resolve a string model name into a concrete OpenAI-backed Model implementation."""
+        # 这是 ModelProvider 最核心的方法。
+        # 调用链通常是：
+        # Agent.model / RunConfig.model 是字符串。
+        # -> turn_preparation.get_model(...)。
+        # -> run_config.model_provider.get_model(model_name)。
+        # -> 这里根据配置返回具体 Model。
+        #
+        # 如果你在业务代码中直接传入一个自定义 Model 实例，这个方法不会被调用。
+        # 如果你只传字符串模型名，就必须通过 provider 解析。
         model_is_explicit = model_name is not None
         resolved_model_name = model_name if model_name is not None else get_default_model()
         cache_key: _WSModelCacheKey = (
@@ -230,6 +249,8 @@ class OpenAIProvider(ModelProvider):
 
         use_websocket_transport = self._responses_transport == "websocket"
         if self._use_responses and use_websocket_transport:
+            # WebSocket transport 更像一条长连接。这里按事件循环缓存 model wrapper，
+            # 让多次 run 可以复用连接，同时避免跨 event loop 错用连接。
             self._prune_closed_ws_loop_caches()
             running_loop = self._get_running_loop()
             loop_cache = (
@@ -243,6 +264,8 @@ class OpenAIProvider(ModelProvider):
         model: Model
 
         if not self._use_responses:
+            # 兼容路径：把 SDK 内部统一输入转换成 Chat Completions messages。
+            # 新项目优先学习 Responses 路径，Chat Completions 主要用于老接口或兼容网关。
             return OpenAIChatCompletionsModel(
                 model=resolved_model_name,
                 openai_client=client,
@@ -250,6 +273,8 @@ class OpenAIProvider(ModelProvider):
             )
 
         if use_websocket_transport:
+            # Responses WebSocket 仍然是文本/工具 Agent loop，不等同于 Realtime/语音会话。
+            # 它适合多轮 Responses 调用频繁、希望复用 socket 的场景。
             model = OpenAIResponsesWSModel(
                 model=resolved_model_name,
                 openai_client=client,
@@ -260,6 +285,8 @@ class OpenAIProvider(ModelProvider):
                 loop_cache[cache_key] = model
             return model
 
+        # 默认主路径：HTTP Responses API。
+        # 对大多数 Agent 项目来说，这是最先理解和最推荐落地的模型适配器。
         model = OpenAIResponsesModel(
             model=resolved_model_name,
             openai_client=client,

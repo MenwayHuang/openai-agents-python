@@ -327,6 +327,16 @@ class Agent(AgentBase, Generic[TContext]):
 
     See `AgentBase` for base parameters that are shared with `RealtimeAgent`s.
     """
+    # Agent 是“角色和能力配置”，不是“模型 provider”。
+    #
+    # 可以把它想成一份任务说明书：
+    # - instructions 决定这个角色怎么思考和回答。
+    # - tools / mcp_servers 决定它可以做哪些动作。
+    # - handoffs 决定它可以把任务交给哪些其他 Agent。
+    # - model / model_settings 决定它默认使用哪个模型和参数。
+    # - guardrails / hooks 决定运行前后如何校验和观察。
+    #
+    # 真正循环执行的是 Runner；真正发 LLM 请求的是 Model；按名字找到 Model 的是 ModelProvider。
 
     instructions: (
         str
@@ -362,6 +372,12 @@ class Agent(AgentBase, Generic[TContext]):
     By default, if not set, the agent will use the default model configured in
     `agents.models.get_default_model()` (currently "gpt-5.4-mini").
     """
+    # Agent.model 既可以放字符串，也可以放 Model 实例。
+    # - 放字符串时，它只是“模型名配置”，Runner 会通过 RunConfig.model_provider 解析。
+    # - 放 Model 实例时，它已经是“可调用模型对象”，Runner 会直接使用。
+    #
+    # 生产项目里通常推荐先放字符串，便于通过环境和 RunConfig 做统一切换。
+    # 只有需要自定义 provider 行为、mock 测试或接入特殊网关时，才直接传 Model 实例。
 
     model_settings: ModelSettings = field(default_factory=get_default_model_settings)
     """Configures model-specific tuning parameters (e.g. temperature, top_p).

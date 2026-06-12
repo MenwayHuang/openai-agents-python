@@ -1,0 +1,152 @@
+# HMY OpenAI Agents Python 中文学习导读
+
+> 本文档用于辅助中文阅读本仓库源码。它不改变 SDK 行为，只解释核心抽象、推荐阅读顺序和与自研 PPT Agent 项目的对应关系。
+
+## 先回答：Model 和 ModelProvider 的区别
+
+`Model` 是“已经选好的模型调用器”。它定义 `get_response()` 和 `stream_response()`，负责真正调用某个模型 API，并把 provider 原始响应转换成 SDK 内部统一的 `ModelResponse` 或流式事件。
+
+`ModelProvider` 是“模型工厂和注册表”。它负责根据字符串模型名、默认模型、provider 前缀、base_url、API key、HTTP/WebSocket 传输配置和缓存策略，返回一个具体的 `Model` 实例。
+
+所以不是所有场景都必须用 `ModelProvider`。如果你已经手动创建了一个 `Model` 实例，可以直接传给 `Agent(model=...)` 或 `RunConfig(model=...)`，Runner 会直接使用它。只有当你传的是 `"gpt-5.4-mini"`、`"openai/gpt-5.4-mini"`、`"litellm/..."` 这种字符串时，Runner 才需要通过 `ModelProvider.get_model()` 把字符串解析成可调用的 `Model`。
+
+可以这样理解：
+
+| 抽象 | 像什么 | 负责什么 | 不负责什么 |
+|---|---|---|---|
+| `Agent` | 角色说明书 | instructions、tools、handoffs、guardrails、默认 model 配置 | 不直接发请求，不跑循环 |
+| `Runner` / `AgentRunner` | 执行调度器 | run 状态、turn 循环、session、trace、恢复、中断 | 不关心底层模型 API 细节 |
+| `ModelProvider` | 模型工厂/路由表 | 把字符串模型名解析成具体 `Model`，管理默认模型、client、传输和缓存 | 不执行单次 Agent loop |
+| `Model` | 模型 API 适配器 | 调用 LLM，返回 `ModelResponse` 或 stream events | 不执行工具，不决定 handoff |
+
+核心调用链是：
+
+```text
+Runner.run(...)
+  -> AgentRunner.run(...)
+  -> run_internal/run_loop.py::run_single_turn(...)
+  -> run_internal/turn_preparation.py::get_model(...)
+  -> 如果 model 是字符串：run_config.model_provider.get_model(...)
+  -> 得到具体 Model 实例
+  -> Model.get_response(...) 或 Model.stream_response(...)
+  -> turn_resolution 解析模型输出并执行工具、handoff 或最终输出。
+```
+
+## 推荐阅读顺序
+
+### 第一轮：只看主线
+
+1. `src/agents/agent.py`
+   - 看 `Agent` 的字段。
+   - 理解 Agent 是配置容器，不是执行器。
+
+2. `src/agents/run.py`
+   - 看 `Runner.run()`、`Runner.run_streamed()`、`AgentRunner.run()`。
+   - 理解一次 run 如何管理 session、trace、turn、恢复和中断。
+
+3. `src/agents/run_internal/turn_preparation.py`
+   - 看 `get_model()`、`get_model_settings()`、`get_all_tools()`、`get_handoffs()`。
+   - 重点理解 model 字符串如何通过 provider 解析。
+
+4. `src/agents/models/interface.py`
+   - 看 `Model`、`ModelProvider`。
+   - 这是模型接入层的抽象边界。
+
+5. `src/agents/models/openai_provider.py`
+   - 看 `OpenAIProvider.get_model()`。
+   - 理解 provider 如何选择 Responses、Chat Completions 或 WebSocket。
+
+6. `src/agents/models/openai_responses.py`
+   - 看 `OpenAIResponsesModel.get_response()` 和 `stream_response()`。
+   - 理解 SDK 内部结构如何落到真实 OpenAI Responses API 调用。
+
+### 第二轮：看 Agent Loop 和工具
+
+1. `src/agents/run_internal/run_loop.py`
+   - 看 `run_single_turn()` 和 `get_new_response()`。
+   - 理解一轮 turn 的结构：准备输入、调用模型、解析结果。
+
+2. `src/agents/run_internal/turn_resolution.py`
+   - 看 `process_model_response()` 和 `get_single_step_result_from_response()`。
+   - 理解模型输出如何变成 final output、tool call、handoff、interruption 或 run again。
+
+3. `src/agents/run_internal/run_steps.py`
+   - 看 `ProcessedResponse`、`NextStepFinalOutput`、`NextStepHandoff`、`NextStepRunAgain`、`NextStepInterruption`。
+   - 这是 runtime 状态机的数据结构。
+
+4. `src/agents/tool.py`
+   - 看 `FunctionTool` 和 `function_tool()`。
+   - 理解 Python 函数如何变成模型可调用的工具。
+
+5. `src/agents/function_schema.py`
+   - 看函数签名和 docstring 如何变成 JSON Schema。
+   - 这是自研工具系统必须掌握的基础。
+
+### 第三轮：看生产能力
+
+1. `src/agents/handoffs/__init__.py`
+   - 理解 handoff 是控制权切换，不是并发。
+
+2. `src/agents/memory/session.py` 和 `src/agents/memory/sqlite_session.py`
+   - 理解会话历史如何保存和恢复。
+
+3. `src/agents/tracing/`
+   - 理解 Trace、Span、Processor 如何记录运行过程。
+
+4. `src/agents/mcp/`
+   - 理解外部 MCP Server 如何暴露工具。
+
+5. `src/agents/realtime/`、`src/agents/voice/`、`src/agents/sandbox/`
+   - 这些暂时不是 PPT Agent MVP 的第一优先级，先知道用途即可。
+
+## 与你的 PPT Agent 项目的对应关系
+
+| OpenAI Agents SDK 抽象 | PPT Agent 中可以怎么映射 |
+|---|---|
+| `Agent` | PlannerAgent、WriterAgent、DesignerAgent、AssemblerAgent 的配置。 |
+| `Runner` | agent-service 的执行入口，统一处理 trace、memory、eval 和错误。 |
+| `Model` | OpenAI、Claude、国产模型或自建模型网关的统一调用接口。 |
+| `ModelProvider` | 根据配置选择模型厂商、模型名、base_url 和传输方式。 |
+| `FunctionTool` | 模板检索、模板分析、生成 PPT 项目、图片搜索、素材下载等确定性工具。 |
+| `Handoff` | Planner 把大纲交给 Writer，Writer/Designer 把结果交给 Assembler。 |
+| `Session` | 用户一次 PPT 项目的多轮需求上下文。 |
+| `Trace` / `Span` | 记录每次生成的模型调用、工具调用、handoff、RAG 检索和失败原因。 |
+
+## 学习重点和暂时不用深挖的内容
+
+优先深挖：
+
+- `Agent`、`Runner`、`Model`、`ModelProvider`、`FunctionTool`、`Handoff`、`Session`、`Tracing`。
+- `run_internal/run_loop.py` 和 `run_internal/turn_resolution.py`，它们最接近你后续自研 agent runtime。
+- `models/openai_responses.py`，它展示了一个完整 provider adapter 如何接入真实模型 API。
+
+暂时知道用途即可：
+
+- `realtime/` 和 `voice/`：实时语音和低延迟交互路径，和 PPT Agent 主线距离较远。
+- `sandbox/`：代码执行和文件环境隔离能力，后续如果做代码类 agent 再深入。
+- `extensions/sandbox/`、`extensions/experimental/`：扩展和实验能力，先不要作为 MVP 主线。
+
+## 阅读源码时的判断方法
+
+如果一个类只保存字段、配置和校验，它通常是“配置层”。例如 `Agent`、`RunConfig`。
+
+如果一个类负责 `run()`、`while turn`、`NextStep`、`RunState`，它通常是“runtime 层”。例如 `AgentRunner` 和 `run_internal`。
+
+如果一个类负责 `get_response()`、`stream_response()`，它通常是“模型调用层”。例如 `OpenAIResponsesModel`。
+
+如果一个类负责 `get_model(model_name)`，它通常是“provider 层”。例如 `OpenAIProvider` 和 `MultiProvider`。
+
+如果一个类负责 Python 函数签名、JSON Schema、参数校验和执行，它通常是“工具层”。例如 `FunctionTool` 和 `function_tool()`。
+
+## 实践建议
+
+学习时不要先照抄整个 SDK。更适合你的路径是：
+
+1. 先自研一个最小 `Model` 接口，只支持非流式 `chat()`。
+2. 再加 `ModelProvider`，让配置字符串可以解析到不同模型实现。
+3. 再做 `FunctionTool` 和工具执行器。
+4. 再做最小 ReAct loop。
+5. 再加 `Session`、`Trace`、`Eval`。
+6. 最后再做 handoff、多 Agent、MCP 和部署。
+
+这样你既能学懂 OpenAI Agents SDK 的成熟设计，也不会一开始被完整框架复杂度拖住。

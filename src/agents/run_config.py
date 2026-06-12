@@ -222,9 +222,19 @@ class RunConfig:
     """The model to use for the entire agent run. If set, will override the model set on every
     agent. The model_provider passed in below must be able to resolve this model name.
     """
+    # 这个字段可以是三种形态：
+    # - None：不覆盖，使用 Agent.model 或默认模型。
+    # - str：交给 model_provider 解析，例如 "gpt-5.4-mini" 或 "litellm/xxx"。
+    # - Model 实例：直接使用这个模型调用器，跳过 provider 查找。
+    #
+    # 对新手来说最容易混淆的是 str 和 Model：
+    # str 是配置名字，还不能发请求；Model 是已经实现 get_response/stream_response 的对象。
 
     model_provider: ModelProvider = field(default_factory=MultiProvider)
     """The model provider to use when looking up string model names. Defaults to OpenAI."""
+    # 只有当 model 或 Agent.model 是字符串时，model_provider 才会参与。
+    # 默认 MultiProvider 支持前缀路由；没有前缀时走 OpenAIProvider。
+    # 这就是为什么 SDK 同时保留 Model 和 ModelProvider 两层抽象。
 
     model_settings: ModelSettings | None = None
     """Configure global model settings. Any non-null values will override the agent-specific model

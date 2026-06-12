@@ -145,7 +145,17 @@ def get_output_schema(agent: Agent[Any]) -> AgentOutputSchemaBase | None:
 def get_model(agent: Agent[Any], run_config: RunConfig) -> Model:
     """Resolve the model instance for this run."""
     # 模型优先级：RunConfig.model 覆盖 Agent.model。
-    # 字符串模型名会交给 model_provider 解析成具体 Model 实例。
+    #
+    # 这里是理解 Model / ModelProvider 的关键入口：
+    # - 如果 RunConfig.model 已经是 Model 实例，说明调用方手动准备好了模型调用器，直接用。
+    # - 如果 RunConfig.model 是字符串，只是一个模型名，必须交给 ModelProvider 解析。
+    # - 如果 Agent.model 已经是 Model 实例，同样直接用。
+    # - 如果 Agent.model 是字符串或 None，就交给 ModelProvider 找具体实现。
+    #
+    # 所以“直接实现 Model 不就好了吗？”答案是：可以。
+    # 但只适合你愿意在代码里手动传 Model 实例的场景。
+    # 一旦你想通过配置字符串、默认模型、前缀路由或多 provider 切换模型，
+    # 就需要 ModelProvider 这一层。
     if isinstance(run_config.model, Model):
         return run_config.model
     elif isinstance(run_config.model, str):
