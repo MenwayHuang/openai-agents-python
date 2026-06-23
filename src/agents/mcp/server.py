@@ -15,7 +15,6 @@ from __future__ import annotations
 # - mcp.* 来自 Model Context Protocol 官方 Python SDK，负责建立 client session、列工具、调用工具。
 # - exceptiongroup 是 Python 3.11 之前的兼容包，用来表示多个异步异常组成的异常组。
 # - contextlib.AsyncExitStack 用于集中管理多个异步连接资源，退出时按顺序清理。
-
 import abc
 import asyncio
 import inspect
@@ -240,6 +239,11 @@ class MCPServer(abc.ABC):
     """Base class for Model Context Protocol servers."""
     # MCPServer 是所有 MCP transport 的统一接口。上层只关心 list_tools/call_tool，
     # 不关心底层是子进程 stdio、SSE，还是 Streamable HTTP。
+    #
+    # 对照你的 PPT Agent：
+    # - 本地/内网素材库可以包装成 MCP server。
+    # - Agent 只把 MCP tool 当成普通 FunctionTool 使用。
+    # - 安全边界要放在 tool_filter、require_approval、服务间鉴权和超时控制上。
 
     def __init__(
         self,
@@ -281,6 +285,8 @@ class MCPServer(abc.ABC):
         opening a network connection. The server is expected to remain connected until
         `cleanup()` is called.
         """
+        # connect 只负责建立连接，不应该顺手执行工具。
+        # 这样工具发现、工具执行、资源清理可以各自独立测试。
         pass
 
     @property
@@ -294,6 +300,8 @@ class MCPServer(abc.ABC):
         """Cleanup the server. For example, this might mean closing a subprocess or
         closing a network connection.
         """
+        # cleanup 是生产系统必须关注的资源释放点。
+        # 本地子进程、SSE 长连接、HTTP session 如果不关闭，会造成句柄泄露或服务残留。
         pass
 
     @abc.abstractmethod
@@ -303,6 +311,8 @@ class MCPServer(abc.ABC):
         agent: AgentBase | None = None,
     ) -> list[MCPTool]:
         """List the tools available on the server."""
+        # list_tools 是“发现外部能力”。生产环境不要把 server 返回的所有工具都直接暴露给模型，
+        # 应该配合 tool_filter 做白名单或按用户/租户/任务动态裁剪。
         pass
 
     @abc.abstractmethod
@@ -313,6 +323,8 @@ class MCPServer(abc.ABC):
         meta: dict[str, Any] | None = None,
     ) -> CallToolResult:
         """Invoke a tool on the server."""
+        # call_tool 才是真正产生副作用的地方。
+        # 文件读写、数据库查询、外部 API 调用都应在这里之前完成审批、鉴权和参数校验。
         pass
 
     @property
@@ -353,6 +365,8 @@ class MCPServer(abc.ABC):
         the next page.  Subclasses that do not support resources may leave this
         unimplemented; it will raise :exc:`NotImplementedError` at call time.
         """
+        # MCP resources 更像“可读取的外部资料”，不是可执行工具。
+        # 对 PPT 项目来说，模板说明、组件规范、品牌手册都可以设计成 resource。
         raise NotImplementedError(
             f"MCP server '{self.name}' does not support list_resources. "
             "Override this method in your server implementation."
@@ -552,6 +566,12 @@ class _MCPServerWithClientSession(MCPServer, abc.ABC):
     """Base class for MCP servers that use a `ClientSession` to communicate with the server."""
     # 大多数 MCP transport 都会建立 ClientSession，这个基类复用连接、缓存 tools、
     # tool filter、retry、cleanup 等逻辑。
+    #
+    # 这里的设计像一个“外部服务连接池 + 安全过滤层”：
+    # - ClientSession 管通信协议。
+    # - list_tools/call_tool 管能力发现和调用。
+    # - tool_filter/require_approval 管哪些能力可以给模型看到或执行。
+    # - retry/timeout/cleanup 管生产稳定性。
 
     @property
     def cached_tools(self) -> list[MCPTool] | None:
@@ -625,6 +645,8 @@ class _MCPServerWithClientSession(MCPServer, abc.ABC):
         # The cache is always dirty at startup, so that we fetch tools at least once
         self._cache_dirty = True
         self._tools_list: list[MCPTool] | None = None
+        # 工具列表缓存能减少 list_tools 往返，但也会带来“工具变化后模型看到旧 schema”的风险。
+        # 你的生产系统如果工具权限经常变化，缓存要按租户/用户/版本设计，而不是全局缓存。
 
         self.tool_filter = tool_filter
         self._serialize_session_requests = False
@@ -667,11 +689,13 @@ class _MCPServerWithClientSession(MCPServer, abc.ABC):
 
         # Apply allowed_tool_names filter (whitelist)
         if "allowed_tool_names" in static_filter:
+            # 白名单是更适合生产的默认策略：没有明确允许的工具就不给模型看到。
             allowed_names = static_filter["allowed_tool_names"]
             filtered_tools = [t for t in filtered_tools if t.name in allowed_names]
 
         # Apply blocked_tool_names filter (blacklist)
         if "blocked_tool_names" in static_filter:
+            # 黑名单适合临时禁用少数工具，但不应替代白名单和服务端权限校验。
             blocked_names = static_filter["blocked_tool_names"]
             filtered_tools = [t for t in filtered_tools if t.name not in blocked_names]
 
@@ -1132,6 +1156,7 @@ class MCPServerStdio(_MCPServerWithClientSession):
     """
     # stdio transport 会启动本地子进程，通过 stdin/stdout 和 MCP server 通讯。
     # 常用于本地工具或 Node/Python MCP server。
+    # 生产环境要谨慎开放 stdio：命令、cwd、env 必须来自可信配置，不能由用户输入直接拼出来。
 
     def __init__(
         self,
@@ -1254,6 +1279,7 @@ class MCPServerSse(_MCPServerWithClientSession):
     for details.
     """
     # SSE transport 通过 HTTP + Server-Sent Events 通讯，适合远程 MCP 服务。
+    # 如果服务在公网或跨网络调用，必须配置认证、HTTPS、超时和错误脱敏。
 
     def __init__(
         self,
@@ -1391,6 +1417,7 @@ class MCPServerStreamableHttp(_MCPServerWithClientSession):
     for details.
     """
     # Streamable HTTP 是较新的 MCP transport，支持 session id 和更标准的 HTTP 交互。
+    # 后续你的 Go 网关或内网素材服务更适合这种 HTTP 形态，便于做服务治理和审计。
 
     def __init__(
         self,

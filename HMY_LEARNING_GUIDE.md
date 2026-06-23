@@ -55,6 +55,39 @@ TResponseInputItem = ResponseInputItemParam
 
 ## 推荐阅读顺序
 
+## 和你当前 agent-service Plan 的对应关系
+
+你现在的 `agent-service` 计划仍然需要翻看本仓库，但要把它当成“成熟实现参考”，不是照抄对象。每个阶段只读对应文件和关键段落即可，不要一上来全仓通读。
+
+| agent-service 阶段 | 本仓库重点文件 | 重点看什么 | 为什么要看 |
+|---|---|---|---|
+| M2 内部协议 | `src/agents/items.py`、`src/agents/models/interface.py` | `ModelResponse`、`RunItem`、工具调用 item、工具结果 item | 学会把模型输出、工具调用、工具结果统一成内部协议；同时提醒自己不要把 OpenAI 类型直接泄漏到自研核心协议。 |
+| M3 Provider 抽象 | `src/agents/models/interface.py`、`src/agents/run_internal/turn_preparation.py`、`src/agents/models/openai_provider.py`、`src/agents/models/multi_provider.py` | `Model` / `ModelProvider` 区别、`get_model()` 如何解析字符串模型名、OpenAIProvider 如何选择 Responses/ChatCompletions/WebSocket | 这是你后续支持 OpenAI、DeepSeek、Claude、自建网关的基础。 |
+| M3 OpenAI-compatible 转换 | `src/agents/models/openai_responses.py`、`src/agents/models/chatcmpl_converter.py` | `_build_response_create_kwargs()`、`Converter.convert_tools()`、Chat Completions 与 Responses 的格式互转 | 学 provider adapter 怎么把内部结构转换成某个厂商 API 的 wire format。 |
+| M4 工具系统 | `src/agents/tool.py`、`src/agents/function_schema.py`、`src/agents/run_internal/tool_execution.py` | `FunctionTool`、`function_tool()`、函数签名转 JSON Schema、工具失败如何回注模型 | 这是 ReAct 和 PPT 工具链的核心：模型只会“请求工具”，真正执行和错误兜底要靠后端。 |
+| M5 上下文构造 | `src/agents/memory/session.py`、`src/agents/memory/sqlite_session.py`、`src/agents/memory/openai_responses_compaction_session.py`、`src/agents/run_internal/turn_preparation.py` | Session 协议、SQLite 存储、长上下文压缩、`call_model_input_filter` | 学会“保存历史”和“构造本轮模型输入”不是一回事；后续 PPT 项目需要 ContextBuilder，而不是简单拼历史。 |
+| M6 ReAct Loop | `src/agents/run.py`、`src/agents/run_internal/run_loop.py`、`src/agents/run_internal/turn_resolution.py`、`src/agents/run_internal/run_steps.py` | `Runner.run()`、`run_single_turn()`、`get_new_response()`、`process_model_response()`、`NextStepRunAgain` | 学 Agent runtime 最小状态机：模型响应后到底是 final、tool、handoff、interruption，还是继续下一轮。 |
+| M8 Trace / Eval 基础 | `src/agents/tracing/spans.py`、`src/agents/tracing/traces.py`、`src/agents/tracing/span_data.py` | Trace 与 Span 的生命周期、span data 如何区分 agent/function/handoff/generation | 你的简历项目要能定位失败原因，trace 是生产级 Agent 和“调 API 脚本”的重要区别。 |
+| M9 状态和恢复 | `src/agents/run_state.py`、`src/agents/run_internal/session_persistence.py`、`src/agents/run_internal/run_steps.py` | RunState、session save/rewind、中断后恢复 | 学会长任务、审批、失败重试不能只靠内存变量；正式产品要有可查询任务状态。 |
+| M12 多 Agent handoff | `src/agents/handoffs/__init__.py`、`src/agents/handoffs/history.py`、`src/agents/run_internal/turn_resolution.py` | handoff 的数据结构、历史如何传给下一个 Agent、`NextStepHandoff` | 明确 handoff 是“控制权交接”，不是并发；先做串行可调试版本，再考虑复杂编排。 |
+| M15 真实 Provider | `src/agents/models/openai_provider.py`、`src/agents/models/openai_responses.py`、`src/agents/models/chatcmpl_converter.py`、`src/agents/models/multi_provider.py` | 默认模型、base_url、client 复用、retry advice、兼容旧接口 | 这是接 DeepSeek/OpenAI-compatible 网关时最容易踩坑的地方：请求格式、工具能力、重试和错误语义都可能不同。 |
+| M17 MCP / 外部工具 | `src/agents/mcp/server.py`、`src/agents/mcp/util.py` | MCP server 生命周期、tool filter、approval、MCP tool 转 FunctionTool | 后续接外部素材库、设计库、文件服务时会用到；但 MVP 阶段可以后置。 |
+
+### 每次阅读的建议节奏
+
+1. 先在 `agent-service/PLAN.md` 找到当前阶段的“先读”清单。
+2. 打开上表对应文件，只看类注释、关键方法和我加的中文学习备注。
+3. 用自己的话写一句阶段理解，例如“Provider 负责把模型名解析成 Model，Model 负责单次请求”。
+4. 再回到 `agent-service` 写测试和实现，不要在 OpenAI 仓库里继续深挖无关分支。
+
+如果某个文件读起来仍然很复杂，优先看我加了中文说明的入口：
+
+- `models/interface.py`：解释抽象边界。
+- `run_internal/turn_preparation.py`：解释模型、工具、handoff 是怎么在一轮调用前准备好的。
+- `models/openai_provider.py`：解释字符串模型名怎么变成具体 Model。
+- `models/openai_responses.py`：解释内部结构怎么转成 Responses API 请求。
+- `run_internal/run_loop.py` 和 `turn_resolution.py`：解释 Agent Loop 状态机。
+
 ### 第一轮：只看主线
 
 1. `src/agents/agent.py`

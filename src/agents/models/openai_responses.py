@@ -16,7 +16,6 @@ from __future__ import annotations
 # - openai.types.responses.* 是 Responses API 的请求/响应/流事件类型，帮助代码明确每个字段的结构。
 # - contextvars.ContextVar 用于异步环境中保存“当前响应 ID”等上下文，不会在线程/任务之间乱串。
 # - typing_extensions.NotRequired 用于 TypedDict 里表示某些 key 可选。
-
 import asyncio
 import contextlib
 import inspect
@@ -783,11 +782,20 @@ class OpenAIResponsesModel(Model):
     ) -> dict[str, Any]:
         # 这是 Responses 适配器最重要的组装函数：
         # 输入历史、工具列表、handoff、结构化输出、模型参数、headers 都在这里合成请求参数。
+        #
+        # 对照你的 PPT Agent：
+        # - 自研 core 层应该传入中立的 ModelInput / ToolDefinition。
+        # - provider 层再把它转换成 OpenAI / DeepSeek / Claude 各自的请求体。
+        # - 这样以后换模型厂商时，不需要改 ReAct Loop 和工具执行器。
         list_input = ItemHelpers.input_to_new_input_list(input)
+        # 第一步先把 string / input item list 统一成 Responses input list。
+        # SDK 选择 Responses item 作为内部中间格式；你的项目建议换成自己的中立消息类型。
         list_input = _to_dump_compatible(list_input)
         list_input = self._remove_openai_responses_api_incompatible_fields(list_input)
 
         if model_settings.parallel_tool_calls and tools:
+            # parallel_tool_calls 允许模型一次返回多个工具调用。
+            # 初学阶段建议先做串行工具调用；等 trace/eval 稳定后，再考虑并行。
             parallel_tool_calls: bool | Omit = True
         elif model_settings.parallel_tool_calls is False:
             parallel_tool_calls = False
@@ -795,6 +803,8 @@ class OpenAIResponsesModel(Model):
             parallel_tool_calls = omit
 
         should_omit_model = prompt is not None and not self._model_is_explicit
+        # prompt-managed 调用里，服务端 prompt 可能已经绑定模型；如果用户没有显式指定模型，
+        # 这里就不发送 model 字段，避免本地默认值覆盖服务端 prompt 配置。
         effective_request_model: str | ChatModel | None = None if should_omit_model else self.model
         effective_computer_tool_model = Converter.resolve_computer_tool_model(
             request_model=effective_request_model,
@@ -808,6 +818,7 @@ class OpenAIResponsesModel(Model):
         )
         if prompt is None:
             # 普通模式：本地传 tools payload。
+            # 这是你自研 provider 最应该学习的路径：工具定义来自后端代码，随请求发给模型。
             converted_tools = Converter.convert_tools(
                 tools,
                 handoffs,
@@ -815,7 +826,9 @@ class OpenAIResponsesModel(Model):
                 tool_choice=model_settings.tool_choice,
             )
         else:
-            # prompt-managed 模式：prompt 可能已经管理部分工具，所以允许 opaque tool search surface。
+            # prompt-managed 模式：prompt 可能已经管理部分工具。
+            # 所以这里允许 opaque tool search surface。
+            # 这种路径更依赖 OpenAI 服务端能力；你早期项目可以先不实现。
             converted_tools = Converter.convert_tools(
                 tools,
                 handoffs,
@@ -825,6 +838,8 @@ class OpenAIResponsesModel(Model):
             )
         converted_tools_payload = _materialize_responses_tool_params(converted_tools.tools)
         response_format = Converter.get_response_format(output_schema)
+        # output_schema 最终落到 text.format=json_schema。
+        # 这和 function calling 不同：结构化输出约束“最终答案”，function tool 约束“工具参数”。
         model_param: str | ChatModel | Omit = (
             effective_request_model if effective_request_model is not None else omit
         )
@@ -845,6 +860,8 @@ class OpenAIResponsesModel(Model):
         if model_settings.top_logprobs is not None:
             include_set.add("message.output_text.logprobs")
         include: list[ResponseIncludable] = list(include_set)
+        # include 不是输入控制，而是“要求响应额外返回哪些字段”。
+        # 例如 file_search 结果或 logprobs，这些常用于调试、评估和可观测性。
 
         if _debug.DONT_LOG_MODEL_DATA:
             logger.debug("Calling LLM")
@@ -871,6 +888,8 @@ class OpenAIResponsesModel(Model):
             )
 
         extra_args = dict(model_settings.extra_args or {})
+        # extra_args 给高级用户透传 SDK 尚未显式建模的新参数。
+        # 生产项目要谨慎暴露这种能力，否则容易绕过你自己的参数校验和安全边界。
         if model_settings.top_logprobs is not None:
             extra_args["top_logprobs"] = model_settings.top_logprobs
         if model_settings.verbosity is not None:
@@ -1955,6 +1974,9 @@ class Converter:
     ) -> ConvertedTools:
         # 将本地 Tool 列表转换成 Responses API 的 tools 参数。
         # 同名 namespace function tools 会先聚合成 namespace wrapper，再插回 tools 列表。
+        #
+        # 读这段时要抓住一个核心：模型看到的是 schema，不是 Python 函数本身。
+        # Python 函数真正执行发生在 turn_resolution/tool_execution 阶段。
         converted_tools: list[ResponsesToolParam | None] = []
         includes: list[ResponseIncludable] = []
         namespace_index_by_name: dict[str, int] = {}
@@ -1980,6 +2002,8 @@ class Converter:
                 else None
             )
             if isinstance(tool, FunctionTool) and namespace_name:
+                # namespace 是为了把一组相关函数工具收拢到同一个命名空间，减少顶层工具列表混乱。
+                # 例如 PPT 项目里可以把 template.search、template.render 放在 template 命名空间下。
                 if namespace_name not in namespace_index_by_name:
                     namespace_index_by_name[namespace_name] = len(converted_tools)
                     converted_tools.append(None)
@@ -2024,6 +2048,7 @@ class Converter:
 
         for handoff in handoffs:
             # handoff 在 API 层也是一个 function tool：模型调用它表示“切换到另一个 agent”。
+            # 因此 handoff 的安全性和工具一样重要：不要让模型随意切到不该访问的 Agent。
             converted_tools.append(cls._convert_handoff_tool(handoff))
 
         return ConvertedTools(
